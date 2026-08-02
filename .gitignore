@@ -1,0 +1,98 @@
+# ========================
+# Live2D AI Layer Splitter - 海外版 .gitignore
+# ========================
+
+# ====== 敏感文件（绝对不能推）======
+# API 密钥、凭证、环境变量
+.env
+.env.local
+.env.*.local
+config.py
+*.key
+*.pem
+credentials.json
+aws_credentials
+
+# ====== 国内版代码（不在本仓库范围）======
+# 海外版仓库只包含 backend/ + live2d-web/ + api-test/（补图脚本）
+live2d-miniprogram/
+miniprogram/
+frontend/
+
+# ====== 编译产物 ======
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.next/
+out/
+.swc/
+*.tsbuildinfo
+
+# ====== 依赖目录 ======
+node_modules/
+.venv/
+venv/
+env/
+
+# ====== 测试数据和工作空间（体积大，不含业务代码）======
+api-test/backend/workspace/
+api-test/test_output/
+api-test/test_images/
+backend/workspace/
+tasks/
+*.psd
+*.psd.json
+
+# ====== 国内 API 脚本（海外版不需要）======
+api-test/aliyun_segmentation.py
+api-test/baidu_segmentation.py
+api-test/wanx_inpainting.py
+api-test/volcengine_segmentation.py
+api-test/check_aliyun.py
+api-test/rule_engine.py
+api-test/backend/services/aliyun_service.py
+api-test/backend/services/baidu_service.py
+api-test/backend/services/wanx_service.py
+api-test/backend/services/rule_engine_service.py
+api-test/backend/services/rule_layer_split.py
+api-test/backend/main.py
+api-test/backend/schemas.py
+api-test/backend/test_backend.py
+api-test/backend/_*.py
+api-test/backend/inpaint_endpoint_snippet.py
+api-test/backend/inpaint_routes.py
+api-test/test_main.py
+api-test/mask_to_alpha.py
+api-test/optimize_inference_fp16.py
+
+# ====== IDE / 编辑器配置 ======
+.idea/
+.vscode/
+.trae/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ====== 日志和临时文件 ======
+*.log
+logs/
+tmp/
+*.tmp
+
+# ====== 模型缓存 ======
+*.onnx
+*.pt
+*.pth
+*.bin
+*.safetensors
+models/
+u2net/
+
+# ====== TRAE 平台文件 ======
+.trae/

@@ -1,0 +1,12 @@
+# See-through Live2D 后端服务依赖
+# 注意：see-through-main 的依赖需单独安装，见其 requirements.txt
+
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+pydantic>=2.0.0
+
+# NSFW 检测（AWS Rekognition）
+# 海外版必需：Stripe 对允许 NSFW 内容的商户会罚款高达 $50,000
+# 未配置 AWS 凭证时，NSFW 检查会自动降级为「跳过」并记录警告
+boto3>=1.34.0

@@ -1,0 +1,20 @@
+# A+B 修补流程依赖（海外版）
+# 海外版移除了百度/通义万相/阿里云 SDK 依赖，改用 Rembg + OpenCV
+
+# 核心依赖
+numpy>=1.24.0
+Pillow>=10.0.0
+opencv-python>=4.8.0
+scipy>=1.10.0
+
+# 前景分割（替代百度 AI，本地运行零费用，海外可用）
+rembg>=2.0.50
+onnxruntime>=1.16.0
+# 或 onnxruntime-gpu>=1.16.0  # GPU 加速（可选）
+
+# SD Inpainting 后端（可选，backend=sd 时需要）
+# 通过 RunPod endpoint 调用，无需本地安装 diffusers
+
+# 后端服务依赖（如果同时跑 FastAPI 后端）
+# 见 backend/requirements.txt
+
