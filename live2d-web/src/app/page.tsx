@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import { motion, AnimatePresence } from 'framer-motion'
 import api, {
   HealthInfo,
   DEFAULT_HEALTH,
@@ -9,14 +10,16 @@ import api, {
   NSFWReviewError,
   NSFWRejectedErrorErr,
 } from '@/lib/api'
+import { useT } from '@/i18n/useT'
 
 const RESOLUTIONS = [
-  { label: '512px (Fastest)', value: 512 },
-  { label: '768px (Recommended)', value: 768 },
-  { label: '1024px (HD)', value: 1024 },
+  { px: 512, tagKey: 'options.resolution.fastest' },
+  { px: 768, tagKey: 'options.resolution.recommended', recommended: true },
+  { px: 1024, tagKey: 'options.resolution.hd' },
 ]
 
 export default function UploadPage() {
+  const t = useT()
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -29,10 +32,11 @@ export default function UploadPage() {
   const [agreed, setAgreed] = useState(false)
   const [health, setHealth] = useState<HealthInfo>({ ...DEFAULT_HEALTH })
   const [checking, setChecking] = useState(false)
+  const [healthExpanded, setHealthExpanded] = useState(false)
+  const [dragging, setDragging] = useState(false)
 
   // NSFW 检测状态
   const [nsfwChecking, setNsfwChecking] = useState(false)
-  // review 态：用户需要确认是否坚持上传
   const [nsfwReview, setNsfwReview] = useState<NSFWCheckResult | null>(null)
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -41,7 +45,19 @@ export default function UploadPage() {
       setFile(selected)
       setPreviewUrl(URL.createObjectURL(selected))
       setError('')
-      // 切换图片时清空之前的 NSFW 复审状态
+      setNsfwReview(null)
+    }
+  }
+
+  // 拖拽上传
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragging(false)
+    const selected = e.dataTransfer.files?.[0]
+    if (selected && selected.type.startsWith('image/')) {
+      setFile(selected)
+      setPreviewUrl(URL.createObjectURL(selected))
+      setError('')
       setNsfwReview(null)
     }
   }
@@ -51,8 +67,11 @@ export default function UploadPage() {
     try {
       const info = await api.healthCheck()
       setHealth(info)
+      // 离线时自动展开详情
+      if (!info.online) setHealthExpanded(true)
     } catch {
       setHealth({ ...DEFAULT_HEALTH, error: 'Health check failed' })
+      setHealthExpanded(true)
     } finally {
       setChecking(false)
     }
@@ -77,15 +96,15 @@ export default function UploadPage() {
    */
   const startSplit = async (skipNSFW = false) => {
     if (!file) {
-      setError('Please select an image first')
+      setError(t('error.selectImage'))
       return
     }
     if (!agreed) {
-      setError('Please read and agree to the Terms of Service')
+      setError(t('error.agreeTerms'))
       return
     }
     if (!health.online) {
-      setError('Backend is offline. Click "Check Status" to verify.')
+      setError(t('error.backendOffline'))
       return
     }
 
@@ -148,7 +167,7 @@ export default function UploadPage() {
 
       // 其他错误
       const msg = err instanceof Error ? err.message : 'Unknown error'
-      setError(`Upload failed: ${msg}`)
+      setError(t('error.uploadFailed', { message: msg }))
     } finally {
       setLoading(false)
       setNsfwChecking(false)
@@ -160,7 +179,7 @@ export default function UploadPage() {
     const labels = result.labels.map(l =>
       `${l.name} (${Math.round(l.confidence * 100)}%)`
     ).join(', ')
-    return `Image rejected: NSFW content detected [${labels}]. Please upload a different image.`
+    return t('error.nsfwRejected', { labels })
   }
 
   // 用户点击「坚持上传」（人工覆盖）
@@ -181,72 +200,165 @@ export default function UploadPage() {
 
   return (
     <div className="container">
-      <div className="header">
-        <h1>Live2D AI Layer Splitter</h1>
-        <p>Upload an anime character image, AI splits it into transparent layers</p>
-      </div>
-
-      {/* Health Check */}
-      <div className={`health-card ${dotClass}`}>
-        <div className="health-row">
-          <div className={`health-dot ${dotClass}`} />
-          <span className="health-title">{online ? 'Backend Online' : 'Backend Offline'}</span>
-          {elapsed > 0 && <span className="health-elapsed">{elapsed}ms</span>}
-        </div>
-        {online && (
-          <div className="health-details">
-            <div className="health-detail-row">
-              <span className="detail-label">GPU</span>
-              <span className={gpu_available ? 'detail-ok' : 'detail-bad'}>
-                {gpu_available ? '✓ Available' : '✗ Unavailable'}
-              </span>
-            </div>
-            <div className="health-detail-row">
-              <span className="detail-label">Model</span>
-              <span className={seethrough_available ? 'detail-ok' : 'detail-bad'}>
-                {seethrough_available ? '✓ Loaded' : '✗ Not found'}
-              </span>
-            </div>
-            <div className="health-detail-row">
-              <span className="detail-label">NSFW</span>
-              <span className={nsfw_check_available ? 'detail-ok' : (nsfw_check_enabled ? 'detail-bad' : 'detail-value')}>
-                {nsfw_check_available ? '✓ Active' : (nsfw_check_enabled ? '✗ Unavailable' : 'Off')}
-              </span>
-            </div>
-            <div className="health-detail-row">
-              <span className="detail-label">Status</span>
-              <span className="detail-value">{status || '-'}</span>
-            </div>
-          </div>
-        )}
-        {!online && hError && (
-          <div>
-            <div className="health-error">{hError}</div>
-            {error_tip && <div className="health-tip">{error_tip}</div>}
-          </div>
-        )}
-      </div>
-
-      <button
-        className="check-btn"
-        onClick={checkHealth}
-        disabled={checking}
+      {/* ====== Hero ====== */}
+      <motion.div
+        className="hero"
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
       >
-        {checking ? 'Checking...' : 'Check Backend Status'}
-      </button>
+        <div className="brand-row">
+          {/* SVG Logo：三层堆叠，象征图层拆分 */}
+          <svg className="brand-logo" viewBox="0 0 36 36" fill="none">
+            <rect x="6" y="6" width="20" height="20" rx="4" fill="url(#g1)" opacity="0.4" />
+            <rect x="10" y="10" width="20" height="20" rx="4" fill="url(#g1)" opacity="0.7" />
+            <rect x="14" y="14" width="20" height="20" rx="4" fill="url(#g1)" />
+            <defs>
+              <linearGradient id="g1" x1="0" y1="0" x2="36" y2="36">
+                <stop stopColor="#7c5cff" />
+                <stop offset="1" stopColor="#22d3ee" />
+              </linearGradient>
+            </defs>
+          </svg>
+          <span className="brand-name">{t('brand.name')}</span>
+        </div>
+        <h1>{t('brand.tagline')}</h1>
+        <p className="hero-subtitle">{t('brand.subtitle')}</p>
+      </motion.div>
 
-      {/* Upload Area */}
-      <div
-        className={`upload-area ${previewUrl ? 'has-image' : ''}`}
+      {/* ====== Health Bar（紧凑状态条）====== */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.1 }}
+      >
+        <div
+          className="health-bar"
+          onClick={() => setHealthExpanded(!healthExpanded)}
+        >
+          <div className={`dot ${dotClass}`} />
+          <div className="health-summary">
+            <span>{online ? t('health.online') : t('health.offline')}</span>
+            {online && (
+              <>
+                <span className="sep">·</span>
+                <span className={`badge ${gpu_available ? 'ok' : 'bad'}`}>
+                  {t('health.gpu')} {gpu_available ? '✓' : '✗'}
+                </span>
+                <span className="sep">·</span>
+                <span className={`badge ${seethrough_available ? 'ok' : 'bad'}`}>
+                  {t('health.model')} {seethrough_available ? '✓' : '✗'}
+                </span>
+                {nsfw_check_enabled && (
+                  <>
+                    <span className="sep">·</span>
+                    <span className={`badge ${nsfw_check_available ? 'ok' : 'muted'}`}>
+                      {t('health.nsfw')} {nsfw_check_available ? '✓' : '—'}
+                    </span>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+          {elapsed > 0 && <span className="health-elapsed">{elapsed}ms</span>}
+          <svg
+            className={`refresh-icon ${checking ? 'spin' : ''}`}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            onClick={(e) => { e.stopPropagation(); checkHealth() }}
+          >
+            <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+            <path d="M21 3v5h-5" />
+          </svg>
+        </div>
+
+        {/* 展开详情 / 离线错误 */}
+        <AnimatePresence>
+          {healthExpanded && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2 }}
+              style={{ overflow: 'hidden' }}
+            >
+              {online ? (
+                <div className="health-detail">
+                  <div className="row">
+                    <span className="label">{t('health.gpu')}</span>
+                    <span className={gpu_available ? 'ok' : 'bad'}>
+                      {gpu_available ? t('health.available') : t('health.unavailable')}
+                    </span>
+                  </div>
+                  <div className="row">
+                    <span className="label">{t('health.model')}</span>
+                    <span className={seethrough_available ? 'ok' : 'bad'}>
+                      {seethrough_available ? t('health.loaded') : t('health.notFound')}
+                    </span>
+                  </div>
+                  <div className="row">
+                    <span className="label">{t('health.nsfw')}</span>
+                    <span className={nsfw_check_available ? 'ok' : 'val'}>
+                      {nsfw_check_available ? t('health.active') : (nsfw_check_enabled ? t('health.unavailable') : t('health.off'))}
+                    </span>
+                  </div>
+                  <div className="row">
+                    <span className="label">{t('health.status')}</span>
+                    <span className="val">{status || '—'}</span>
+                  </div>
+                </div>
+              ) : (
+                hError && (
+                  <div className="health-detail">
+                    <div className="health-error">{hError}</div>
+                    {error_tip && <div className="health-tip">{error_tip}</div>}
+                  </div>
+                )
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+
+      {/* ====== Upload Area ====== */}
+      <motion.div
+        className={`upload-area ${previewUrl ? 'has-image' : ''} ${dragging ? 'dragging' : ''}`}
         onClick={() => fileInputRef.current?.click()}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.2 }}
+        whileHover={{ y: -2 }}
       >
         {previewUrl ? (
-          <img className="preview-img" src={previewUrl} alt="Preview" />
+          <>
+            <button
+              className="change-btn"
+              onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click() }}
+            >
+              {t('upload.change')}
+            </button>
+            <div className="preview-wrap">
+              <img className="preview-img" src={previewUrl} alt="Preview" />
+            </div>
+          </>
         ) : (
           <div>
-            <span className="placeholder-icon">+</span>
-            <span className="placeholder-text">Click to upload image</span>
-            <span className="placeholder-hint">Supports JPG / PNG / WebP · No NSFW content</span>
+            <div className="upload-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+            </div>
+            <span className="upload-text">{t('upload.hint')}</span>
+            <span className="upload-hint">{t('upload.formats')}</span>
           </div>
         )}
         <input
@@ -256,24 +368,39 @@ export default function UploadPage() {
           style={{ display: 'none' }}
           onChange={handleFileChange}
         />
-      </div>
+      </motion.div>
 
-      {/* Options */}
-      <div className="options">
-        <div className="option-row">
-          <span className="option-label">Resolution</span>
-          <select
-            value={resolution}
-            onChange={(e) => setResolution(Number(e.target.value))}
-          >
-            {RESOLUTIONS.map(r => (
-              <option key={r.value} value={r.value}>{r.label}</option>
-            ))}
-          </select>
+      {/* ====== Settings Card ====== */}
+      <motion.div
+        className="settings-card"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.3 }}
+      >
+        <div className="settings-title">{t('options.title')}</div>
+
+        {/* 分辨率卡片选择器 */}
+        <div className="res-grid">
+          {RESOLUTIONS.map(r => (
+            <div
+              key={r.px}
+              className={`res-card ${resolution === r.px ? 'active' : ''}`}
+              onClick={() => setResolution(r.px)}
+            >
+              <span className="px">{r.px}px</span>
+              <span className={`tag ${r.recommended ? 'recommended' : ''}`}>
+                {t(r.tagKey)}
+              </span>
+            </div>
+          ))}
         </div>
 
+        {/* 左右拆分开关 */}
         <div className="option-row">
-          <span className="option-label">Left/Right Split</span>
+          <div>
+            <span className="option-label">{t('options.tblrSplit.label')}</span>
+            <span className="option-desc">{t('options.tblrSplit.desc')}</span>
+          </div>
           <div
             className={`switch ${tblrSplit ? 'on' : ''}`}
             onClick={() => setTblrSplit(!tblrSplit)}
@@ -281,78 +408,106 @@ export default function UploadPage() {
             <div className="switch-dot" />
           </div>
         </div>
-      </div>
+      </motion.div>
 
-      {error && <div className="error-msg">{error}</div>}
-
-      {/* NSFW 人工复审弹窗 */}
-      {nsfwReview && (
-        <div className="nsfw-review-overlay">
-          <div className="nsfw-review-box">
-            <div className="nsfw-review-icon">⚠</div>
-            <h3 className="nsfw-review-title">Content Review Required</h3>
-            <p className="nsfw-review-desc">
-              The image was flagged by automated NSFW detection.
-              Please review the detected labels below and decide whether to proceed.
-            </p>
-            <div className="nsfw-labels">
-              {nsfwReview.labels.map((label, idx) => (
-                <div className="nsfw-label-item" key={idx}>
-                  <span className="nsfw-label-name">{label.name}</span>
-                  <span className="nsfw-label-conf">
-                    {Math.round(label.confidence * 100)}%
-                  </span>
-                </div>
-              ))}
-            </div>
-            <p className="nsfw-review-warning">
-              ⚠ Continuing will log this action. Repeated violations may result in account suspension.
-            </p>
-            <div className="nsfw-review-actions">
-              <button
-                className="nsfw-btn-cancel"
-                onClick={handleCancelReview}
-                disabled={loading}
-              >
-                Cancel
-              </button>
-              <button
-                className="nsfw-btn-force"
-                onClick={handleForceUpload}
-                disabled={loading}
-              >
-                {loading ? 'Uploading...' : 'Continue Anyway'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {error && (
+        <motion.div
+          className="error-msg"
+          initial={{ opacity: 0, scale: 0.98 }}
+          animate={{ opacity: 1, scale: 1 }}
+        >
+          {error}
+        </motion.div>
       )}
 
-      {/* Agreement */}
-      <div
+      {/* ====== NSFW 人工复审弹窗 ====== */}
+      <AnimatePresence>
+        {nsfwReview && (
+          <motion.div
+            className="nsfw-review-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="nsfw-review-box"
+              initial={{ scale: 0.95, y: 10 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 10 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            >
+              <div className="nsfw-review-icon">⚠</div>
+              <h3 className="nsfw-review-title">{t('nsfw.title')}</h3>
+              <p className="nsfw-review-desc">{t('nsfw.desc')}</p>
+              <div className="nsfw-labels">
+                {nsfwReview.labels.map((label, idx) => (
+                  <div className="nsfw-label-item" key={idx}>
+                    <span className="nsfw-label-name">{label.name}</span>
+                    <span className="nsfw-label-conf">
+                      {Math.round(label.confidence * 100)}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p className="nsfw-review-warning">{t('nsfw.warning')}</p>
+              <div className="nsfw-review-actions">
+                <button
+                  className="nsfw-btn-cancel"
+                  onClick={handleCancelReview}
+                  disabled={loading}
+                >
+                  {t('nsfw.cancel')}
+                </button>
+                <button
+                  className="nsfw-btn-force"
+                  onClick={handleForceUpload}
+                  disabled={loading}
+                >
+                  {loading ? t('action.uploading') : t('nsfw.continue')}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ====== Agreement ====== */}
+      <motion.div
         className="agreement-row"
         onClick={() => setAgreed(!agreed)}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.4 }}
       >
         <div className={`agreement-checkbox ${agreed ? 'checked' : ''}`}>
           {agreed && <span className="check-mark">✓</span>}
         </div>
-        <span>I have read and agree to the</span>
+        <span>{t('terms.agree')}</span>
         <a
           href="/terms"
           className="agreement-link"
           onClick={(e) => e.stopPropagation()}
         >
-          Terms of Service
+          {t('terms.link')}
         </a>
-      </div>
+      </motion.div>
 
-      <button
+      {/* ====== Start Button ====== */}
+      <motion.button
         className="start-btn"
         onClick={() => startSplit(false)}
         disabled={!file || loading || nsfwChecking || !agreed}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.45 }}
+        whileHover={{ y: -2 }}
+        whileTap={{ y: 0 }}
       >
-        {nsfwChecking ? 'Checking content...' : (loading ? 'Uploading...' : 'Start Splitting')}
-      </button>
+        {nsfwChecking ? t('action.checking') : (loading ? t('action.uploading') : t('action.start'))}
+        {!loading && !nsfwChecking && (
+          <span className="arrow">→</span>
+        )}
+      </motion.button>
     </div>
   )
 }

@@ -1,0 +1,65 @@
+{
+  "brand": {
+    "name": "Live2D Layer Splitter",
+    "tagline": "Split anime art into layers. Ready for Live2D.",
+    "subtitle": "AI-powered 47-part decomposition · Transparent PNG export · PSD download"
+  },
+  "upload": {
+    "title": "Upload Character",
+    "hint": "Click or drag an anime character image here",
+    "formats": "JPG / PNG / WebP · No NSFW content",
+    "change": "Change image"
+  },
+  "health": {
+    "online": "Online",
+    "offline": "Offline",
+    "gpu": "GPU",
+    "model": "Model",
+    "nsfw": "NSFW",
+    "status": "Status",
+    "available": "Available",
+    "unavailable": "Unavailable",
+    "loaded": "Loaded",
+    "notFound": "Not found",
+    "active": "Active",
+    "off": "Off",
+    "refresh": "Refresh",
+    "checking": "Checking..."
+  },
+  "options": {
+    "title": "Settings",
+    "resolution": {
+      "label": "Resolution",
+      "fastest": "Fastest",
+      "recommended": "Recommended",
+      "hd": "HD"
+    },
+    "tblrSplit": {
+      "label": "Left/Right Split",
+      "desc": "Split symmetric parts (arms / legs / eyes)"
+    }
+  },
+  "terms": {
+    "agree": "I have read and agree to the",
+    "link": "Terms of Service"
+  },
+  "action": {
+    "start": "Start Splitting",
+    "uploading": "Uploading...",
+    "checking": "Checking content..."
+  },
+  "error": {
+    "selectImage": "Please select an image first",
+    "agreeTerms": "Please read and agree to the Terms of Service",
+    "backendOffline": "Backend is offline. Click refresh to verify.",
+    "uploadFailed": "Upload failed: {message}",
+    "nsfwRejected": "Image rejected: NSFW content detected [{labels}]. Please upload a different image."
+  },
+  "nsfw": {
+    "title": "Content Review Required",
+    "desc": "The image was flagged by automated NSFW detection. Please review the detected labels below and decide whether to proceed.",
+    "warning": "Continuing will log this action. Repeated violations may result in account suspension.",
+    "cancel": "Cancel",
+    "continue": "Continue Anyway"
+  }
+}
