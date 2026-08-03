@@ -1,10 +1,17 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import dynamic from 'next/dynamic'
+import { I18nProvider } from '@/i18n/useT'
 
 // 彗星背景：客户端组件，SSR 期间渲染占位空节点避免闪烁
 const CometBackground = dynamic(
   () => import('@/components/CometBackground').then(m => m.default),
+  { ssr: false }
+)
+
+// 语言切换器：客户端组件
+const LanguageSwitcher = dynamic(
+  () => import('@/components/LanguageSwitcher').then(m => m.default),
   { ssr: false }
 )
 
@@ -26,8 +33,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
-        <CometBackground />
-        {children}
+        <I18nProvider>
+          <CometBackground />
+          {/* 固定在右上角的语言切换器 */}
+          <div className="lang-fixed-top">
+            <LanguageSwitcher />
+          </div>
+          {children}
+        </I18nProvider>
       </body>
     </html>
   )

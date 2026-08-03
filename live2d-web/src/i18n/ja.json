@@ -1,0 +1,130 @@
+{
+  "brand": {
+    "name": "Live2D レイヤー分割",
+    "tagline": "アニメ絵をレイヤーに分割。Live2D に対応。",
+    "subtitle": "AI 47パーツ分解 · 透明PNG書き出し · PSDダウンロード"
+  },
+  "upload": {
+    "title": "キャラクターをアップロード",
+    "hint": "アニメキャラクターの画像をクリックまたはドラッグ",
+    "formats": "JPG / PNG / WebP · NSFWコンテンツ禁止",
+    "change": "画像を変更"
+  },
+  "health": {
+    "online": "オンライン",
+    "offline": "オフライン",
+    "gpu": "GPU",
+    "model": "モデル",
+    "nsfw": "NSFW",
+    "status": "ステータス",
+    "available": "利用可能",
+    "unavailable": "利用不可",
+    "loaded": "読込済み",
+    "notFound": "見つかりません",
+    "active": "有効",
+    "off": "オフ",
+    "refresh": "更新",
+    "checking": "確認中..."
+  },
+  "options": {
+    "title": "設定",
+    "resolution": {
+      "label": "解像度",
+      "fastest": "最速",
+      "recommended": "推奨",
+      "hd": "HD"
+    },
+    "tblrSplit": {
+      "label": "左右分割",
+      "desc": "対称パーツを分割（腕 / 脚 / 目）"
+    }
+  },
+  "terms": {
+    "agree": "以下を読み同意しました",
+    "link": "利用規約"
+  },
+  "action": {
+    "start": "分割開始",
+    "uploading": "アップロード中...",
+    "checking": "コンテンツ確認中..."
+  },
+  "error": {
+    "selectImage": "画像を選択してください",
+    "agreeTerms": "利用規約に同意してください",
+    "backendOffline": "バックエンドがオフラインです。更新して確認してください。",
+    "uploadFailed": "アップロード失敗: {message}",
+    "nsfwRejected": "画像が拒否されました: NSFWコンテンツが検出されました [{labels}]。別の画像をアップロードしてください。"
+  },
+  "nsfw": {
+    "title": "コンテンツレビューが必要",
+    "desc": "NSFW自動検出でフラグされました。検出されたラベルを確認し、続行するか判断してください。",
+    "warning": "続行するとこのアクションが記録されます。繰り返し違反するとアカウント停止になる場合があります。",
+    "cancel": "キャンセル",
+    "continue": "強制続行"
+  },
+  "animate": {
+    "title": "アニメーションラボ",
+    "activeCount": "実行中",
+    "previewHint": "ライブプレビュー",
+    "intensity": "強度",
+    "exportBtn": "書き出し",
+    "tabs": {
+      "face": "顔",
+      "body": "体",
+      "hair": "髪",
+      "scene": "シーン"
+    },
+    "effects": {
+      "blink": {
+        "name": "自動まばたき",
+        "desc": "ランダムな間隔で自然にまばたき"
+      },
+      "eyeShine": {
+        "name": "瞳のきらめき",
+        "desc": "瞳にきらめく光の演出"
+      },
+      "blush": {
+        "name": "照れ顔",
+        "desc": "頬が赤く脈動する演出"
+      },
+      "talk": {
+        "name": "リップシンク",
+        "desc": "話しているように口が開閉"
+      },
+      "breath": {
+        "name": "呼吸",
+        "desc": "胸がわずかに上下する動き"
+      },
+      "headTilt": {
+        "name": "首振り",
+        "desc": "頭がゆっくり左右に傾く"
+      },
+      "sway": {
+        "name": "体の揺れ",
+        "desc": "全身がリズミカルに揺れる"
+      },
+      "hairSwing": {
+        "name": "髪の揺れ",
+        "desc": "風に吹かれるように髪が揺れる"
+      },
+      "accessorySway": {
+        "name": "アクセサリー揺れ",
+        "desc": "髪飾りが動きに合わせて揺れる"
+      },
+      "sparkleBg": {
+        "name": "きらめき背景",
+        "desc": "背景にきらめく粒子が浮遊"
+      }
+    },
+    "export": {
+      "title": "アニメーション書き出し",
+      "desc": "出力形式を選択",
+      "gif": "アニメーションGIF",
+      "live2d": "Live2Dモデル",
+      "video": "動画 (MP4)",
+      "cancel": "キャンセル",
+      "confirm": "書き出し",
+      "processing": "レンダリング中..."
+    }
+  }
+}

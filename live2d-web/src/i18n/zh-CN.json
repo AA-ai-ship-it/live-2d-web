@@ -1,0 +1,130 @@
+{
+  "brand": {
+    "name": "Live2D 图层拆分器",
+    "tagline": "将动漫立绘拆分为图层，Ready for Live2D。",
+    "subtitle": "AI 47部位智能分解 · 透明PNG导出 · PSD下载"
+  },
+  "upload": {
+    "title": "上传角色图片",
+    "hint": "点击或拖拽动漫角色图片到此处",
+    "formats": "JPG / PNG / WebP · 禁止NSFW内容",
+    "change": "更换图片"
+  },
+  "health": {
+    "online": "在线",
+    "offline": "离线",
+    "gpu": "GPU",
+    "model": "模型",
+    "nsfw": "NSFW",
+    "status": "状态",
+    "available": "可用",
+    "unavailable": "不可用",
+    "loaded": "已加载",
+    "notFound": "未找到",
+    "active": "已启用",
+    "off": "关闭",
+    "refresh": "刷新",
+    "checking": "检查中..."
+  },
+  "options": {
+    "title": "设置",
+    "resolution": {
+      "label": "分辨率",
+      "fastest": "最快",
+      "recommended": "推荐",
+      "hd": "高清"
+    },
+    "tblrSplit": {
+      "label": "左右拆分",
+      "desc": "拆分对称部位（手臂 / 腿 / 眼睛）"
+    }
+  },
+  "terms": {
+    "agree": "我已阅读并同意",
+    "link": "服务条款"
+  },
+  "action": {
+    "start": "开始拆分",
+    "uploading": "上传中...",
+    "checking": "内容检查中..."
+  },
+  "error": {
+    "selectImage": "请先选择图片",
+    "agreeTerms": "请阅读并同意服务条款",
+    "backendOffline": "后端服务离线，点击刷新验证。",
+    "uploadFailed": "上传失败：{message}",
+    "nsfwRejected": "图片被拒绝：检测到NSFW内容 [{labels}]，请上传其他图片。"
+  },
+  "nsfw": {
+    "title": "需要内容审核",
+    "desc": "图片被NSFW自动检测标记，请查看下方检测标签并决定是否继续。",
+    "warning": "继续操作将被记录，多次违规可能导致账号封禁。",
+    "cancel": "取消",
+    "continue": "仍然继续"
+  },
+  "animate": {
+    "title": "动画实验室",
+    "activeCount": "个效果",
+    "previewHint": "实时预览",
+    "intensity": "强度",
+    "exportBtn": "导出",
+    "tabs": {
+      "face": "面部",
+      "body": "身体",
+      "hair": "头发",
+      "scene": "场景"
+    },
+    "effects": {
+      "blink": {
+        "name": "自动眨眼",
+        "desc": "随机间隔自然眨眼"
+      },
+      "eyeShine": {
+        "name": "眼神光",
+        "desc": "眼睛中闪烁的光芒"
+      },
+      "blush": {
+        "name": "腮红",
+        "desc": "脸颊泛红，渐显渐隐"
+      },
+      "talk": {
+        "name": "嘴唇同步",
+        "desc": "嘴巴像说话一样开合"
+      },
+      "breath": {
+        "name": "呼吸",
+        "desc": "胸部轻微起伏"
+      },
+      "headTilt": {
+        "name": "头部摇摆",
+        "desc": "头部左右轻轻倾斜"
+      },
+      "sway": {
+        "name": "身体摇摆",
+        "desc": "全身有节奏地摆动"
+      },
+      "hairSwing": {
+        "name": "头发飘动",
+        "desc": "头发如微风中飘动"
+      },
+      "accessorySway": {
+        "name": "发饰弹跳",
+        "desc": "发饰随动作弹跳摇晃"
+      },
+      "sparkleBg": {
+        "name": "闪烁背景",
+        "desc": "背景中飘浮的闪光粒子"
+      }
+    },
+    "export": {
+      "title": "导出动画",
+      "desc": "选择输出格式",
+      "gif": "动态GIF",
+      "live2d": "Live2D模型",
+      "video": "视频 (MP4)",
+      "cancel": "取消",
+      "confirm": "导出",
+      "processing": "渲染中..."
+    }
+  }
+}
