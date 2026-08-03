@@ -19,13 +19,11 @@
 #        git clone https://github.com/AA-ai-ship-it/live-2d-web.git /workspace/live2d-repo
 #        bash /workspace/live2d-repo/backend/deploy_runpod.sh
 #
-# 必填环境变量（执行前 export 或在 RunPod 模板环境变量里配置）：
-#   SEE_THROUGH_REPO  see-through-main 的 git 地址（你 AutoDL 上 clone 用的那个）
-#
-# 可选环境变量（有默认值）：
+# 环境变量（均有默认值，无需手动设置即可部署）：
+#   SEE_THROUGH_REPO   默认 https://github.com/shitagaki-lab/see-through.git（SIGGRAPH 2026 原版）
 #   BACKEND_REPO       默认 https://github.com/AA-ai-ship-it/live-2d-web.git
 #   NSFW_CHECK_ENABLED 默认 1（启用 NSFW 检测，Stripe 合规必需）
-#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION  AWS Rekognition 凭证
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION  AWS Rekognition 凭证（可选，未配置则降级为跳过）
 # ============================================================
 
 set -e
@@ -45,7 +43,7 @@ PID_FILE="$DATA_DIR/backend.pid"
 
 # 仓库地址（可被环境变量覆盖）
 BACKEND_REPO="${BACKEND_REPO:-https://github.com/AA-ai-ship-it/live-2d-web.git}"
-SEE_THROUGH_REPO="${SEE_THROUGH_REPO:-}"
+SEE_THROUGH_REPO="${SEE_THROUGH_REPO:-https://github.com/shitagaki-lab/see-through.git}"
 
 # 颜色
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -63,11 +61,7 @@ fi
 info "  数据盘 $WORKSPACE ✓"
 
 if [ -z "$SEE_THROUGH_REPO" ]; then
-  error "未设置 SEE_THROUGH_REPO 环境变量。
-   请先执行（替换为你 AutoDL 上用的地址）：
-     export SEE_THROUGH_REPO=https://github.com/xxx/see-through-main.git
-   然后重新运行本脚本。
-   如果不确定地址，可在 AutoDL 上执行：cd /root/autodl-tmp/see-through && git remote -v"
+  error "SEE_THROUGH_REPO 为空，不应发生（脚本有默认值）。请检查脚本完整性。"
 fi
 info "  see-through 仓库: $SEE_THROUGH_REPO ✓"
 
