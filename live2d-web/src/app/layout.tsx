@@ -1,5 +1,12 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import dynamic from 'next/dynamic'
+
+// 彗星背景：客户端组件，SSR 期间渲染占位空节点避免闪烁
+const CometBackground = dynamic(
+  () => import('@/components/CometBackground').then(m => m.default),
+  { ssr: false }
+)
 
 export const metadata: Metadata = {
   title: 'Live2D Layer Splitter — AI Anime Decomposition',
@@ -18,7 +25,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <CometBackground />
+        {children}
+      </body>
     </html>
   )
 }

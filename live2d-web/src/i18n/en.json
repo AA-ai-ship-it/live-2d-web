@@ -61,5 +61,70 @@
     "warning": "Continuing will log this action. Repeated violations may result in account suspension.",
     "cancel": "Cancel",
     "continue": "Continue Anyway"
+  },
+  "animate": {
+    "title": "Animation Lab",
+    "activeCount": "active",
+    "previewHint": "Live preview",
+    "intensity": "Intensity",
+    "exportBtn": "Export",
+    "tabs": {
+      "face": "Face",
+      "body": "Body",
+      "hair": "Hair",
+      "scene": "Scene"
+    },
+    "effects": {
+      "blink": {
+        "name": "Auto Blink",
+        "desc": "Eyes blink naturally at random intervals"
+      },
+      "eyeShine": {
+        "name": "Eye Sparkle",
+        "desc": "Shimmering light in the eyes"
+      },
+      "blush": {
+        "name": "Blush",
+        "desc": "Cheeks glow with a pulsing red tint"
+      },
+      "talk": {
+        "name": "Lip Sync",
+        "desc": "Mouth opens and closes as if talking"
+      },
+      "breath": {
+        "name": "Breathing",
+        "desc": "Subtle chest rise and fall"
+      },
+      "headTilt": {
+        "name": "Head Sway",
+        "desc": "Head tilts gently side to side"
+      },
+      "sway": {
+        "name": "Body Rock",
+        "desc": "Whole body sways rhythmically"
+      },
+      "hairSwing": {
+        "name": "Hair Flow",
+        "desc": "Hair sways as if in a breeze"
+      },
+      "accessorySway": {
+        "name": "Accessory Bounce",
+        "desc": "Hair accessories bounce with movement"
+      },
+      "sparkleBg": {
+        "name": "Sparkle BG",
+        "desc": "Floating sparkle particles in background"
+      }
+    },
+    "export": {
+      "title": "Export Animation",
+      "desc": "Choose your output format",
+      "gif": "Animated GIF",
+      "live2d": "Live2D Model",
+      "video": "Video (MP4)",
+      "cancel": "Cancel",
+      "confirm": "Export",
+      "processing": "Rendering..."
+    }
   }
 }

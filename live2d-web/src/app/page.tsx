@@ -508,6 +508,21 @@ export default function UploadPage() {
           <span className="arrow">→</span>
         )}
       </motion.button>
+
+      {/* ====== Animation Lab 入口 ====== */}
+      <motion.div
+        className="animate-entry"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.55 }}
+      >
+        <button className="animate-link-btn" onClick={() => router.push('/animate')}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 3l14 9-14 9V3z" />
+          </svg>
+          <span>Animation Lab (Demo)</span>
+        </button>
+      </motion.div>
     </div>
   )
 }
