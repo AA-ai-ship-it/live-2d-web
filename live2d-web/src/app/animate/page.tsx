@@ -1,14 +1,18 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import AnimationCanvas, { EffectState } from '@/components/AnimationCanvas'
+import { useAppStore } from '@/store/useAppStore'
+import { toast } from '@/store/toastStore'
 import { useT } from '@/i18n/useT'
 import {
   MOCK_LAYERS, EFFECT_DEFS, EXPORT_FORMATS,
-  EffectCategory, ExportFormat,
+  EFFECT_GROUPS, DEFAULT_EFFECTS,
+  EffectCategory, ExportFormat, MockLayer, PartType,
 } from '@/lib/mockData'
+import type { LayerInfo } from '@/lib/api'
 
 const CATEGORY_TABS: { id: EffectCategory; labelKey: string; icon: string }[] = [
   { id: 'face',  labelKey: 'animate.tabs.face',  icon: '😊' },
@@ -31,64 +35,137 @@ const EFFECT_ICONS: Record<string, string> = {
   sparkles: 'M12 3L13 9L19 10L13 11L12 17L11 11L5 10L11 9zM19 17L19.5 19.5L22 20L19.5 20.5L19 23L18.5 20.5L16 20L18.5 19.5z',
 }
 
+function layerInfoToMockLayer(layer: LayerInfo): MockLayer {
+  return {
+    id: layer.id,
+    name: layer.name,
+    partType: (layer.part_type || 'other') as PartType,
+    svg: layer.url || '',
+    x: layer.left,
+    y: layer.top,
+    w: layer.width,
+    h: layer.height,
+    zIndex: layer.z_index || 0,
+    visible: true,
+  }
+}
+
 export default function AnimatePage() {
-  const t = useT()
+  const { t } = useT()
   const router = useRouter()
 
-  // 当前 Tab
+  const {
+    activeEffects,
+    effectIntensity,
+    toggleEffect,
+    setEffectIntensity,
+    setActiveEffectsFromPreset,
+    layers,
+    groups,
+    taskId,
+  } = useAppStore()
+
   const [activeTab, setActiveTab] = useState<EffectCategory>('face')
-
-  // 效果状态：默认开启呼吸+眨眼
-  const [effectStates, setEffectStates] = useState<EffectState[]>(() =>
-    EFFECT_DEFS.map(def => ({
-      id: def.id,
-      enabled: def.id === 'breath' || def.id === 'blink',
-      intensity: def.defaultIntensity,
-    }))
-  )
-
-  // 导出弹窗
   const [showExport, setShowExport] = useState(false)
   const [exportFormat, setExportFormat] = useState<ExportFormat>('gif')
   const [exporting, setExporting] = useState(false)
 
-  // 当前 Tab 下的效果
+  useEffect(() => {
+    try {
+      if (!activeEffects || Object.keys(activeEffects).length === 0) {
+        setActiveEffectsFromPreset(DEFAULT_EFFECTS)
+      }
+    } catch (err) {
+      toast.error(t('animate.errors.initPresetFailed'))
+    }
+  }, [activeEffects, setActiveEffectsFromPreset, t])
+
+  const canvasLayers: MockLayer[] = useMemo(() => {
+    try {
+      if (layers && layers.length > 0) {
+        return layers.map(layerInfoToMockLayer)
+      }
+      return MOCK_LAYERS
+    } catch (err) {
+      toast.error(t('animate.errors.layersConvertFailed'))
+      return MOCK_LAYERS
+    }
+  }, [layers, t])
+
+  const effectStates: EffectState[] = useMemo(
+    () => EFFECT_DEFS.map(def => ({
+      id: def.id,
+      enabled: !!activeEffects[def.id],
+      intensity: effectIntensity[def.id] != null
+        ? effectIntensity[def.id] / 100
+        : def.defaultIntensity,
+    })),
+    [activeEffects, effectIntensity]
+  )
+
   const tabEffects = useMemo(
-    () => EFFECT_DEFS.filter(e => e.category === activeTab),
+    () => EFFECT_GROUPS[activeTab] || [],
     [activeTab]
   )
 
-  // 切换效果开关
-  const toggleEffect = (id: string) => {
-    setEffectStates(prev => prev.map(e =>
-      e.id === id ? { ...e, enabled: !e.enabled } : e
-    ))
+  const handleToggleEffect = (id: string) => {
+    try {
+      toggleEffect(id)
+    } catch (err) {
+      toast.error(t('animate.errors.toggleFailed'))
+    }
   }
 
-  // 调整效果强度
-  const setIntensity = (id: string, intensity: number) => {
-    setEffectStates(prev => prev.map(e =>
-      e.id === id ? { ...e, intensity } : e
-    ))
+  const handleSetIntensity = (id: string, value: number) => {
+    try {
+      setEffectIntensity(id, value)
+    } catch (err) {
+      toast.error(t('animate.errors.intensityFailed'))
+    }
   }
 
-  // 模拟导出
   const handleExport = () => {
-    setExporting(true)
-    setTimeout(() => {
+    try {
+      setExporting(true)
+      setTimeout(() => {
+        try {
+          setExporting(false)
+          setShowExport(false)
+          toast.info('Export coming soon')
+        } catch (innerErr) {
+          setExporting(false)
+          toast.error(t('animate.errors.exportFailed'))
+        }
+      }, 1500)
+    } catch (err) {
       setExporting(false)
-      setShowExport(false)
-    }, 2000)
+      toast.error(t('animate.errors.exportFailed'))
+    }
   }
 
-  // 活跃效果数
+  const handleExportClick = () => {
+    try {
+      setShowExport(true)
+    } catch (err) {
+      toast.error(t('animate.errors.exportDialogFailed'))
+    }
+  }
+
+  const handleBack = () => {
+    try {
+      router.push('/')
+    } catch (err) {
+      toast.error(t('animate.errors.backFailed'))
+    }
+  }
+
   const activeCount = effectStates.filter(e => e.enabled).length
 
   return (
     <div className="animate-page">
       {/* ====== 顶栏 ====== */}
       <div className="animate-topbar">
-        <button className="back-btn" onClick={() => router.push('/')}>
+        <button className="back-btn" onClick={handleBack}>
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M19 12H5M12 19l-7-7 7-7" />
           </svg>
@@ -97,7 +174,7 @@ export default function AnimatePage() {
           <span className="title-text">{t('animate.title')}</span>
           <span className="title-badge">{activeCount} {t('animate.activeCount')}</span>
         </div>
-        <button className="export-trigger" onClick={() => setShowExport(true)}>
+        <button className="export-trigger" onClick={handleExportClick}>
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />
           </svg>
@@ -113,7 +190,7 @@ export default function AnimatePage() {
         transition={{ duration: 0.3 }}
       >
         <AnimationCanvas
-          layers={MOCK_LAYERS}
+          layers={canvasLayers}
           effects={effectStates}
           effectDefs={EFFECT_DEFS}
           width={512}
@@ -167,7 +244,7 @@ export default function AnimatePage() {
                   <div className="effect-card-right">
                     <div
                       className={`switch ${state.enabled ? 'on' : ''}`}
-                      onClick={() => toggleEffect(def.id)}
+                      onClick={() => handleToggleEffect(def.id)}
                     >
                       <div className="switch-dot" />
                     </div>
@@ -186,11 +263,11 @@ export default function AnimatePage() {
                           type="range"
                           min={0}
                           max={100}
-                          value={Math.round(state.intensity * 100)}
-                          onChange={e => setIntensity(def.id, Number(e.target.value) / 100)}
+                          value={effectIntensity[def.id] != null ? effectIntensity[def.id] : Math.round(def.defaultIntensity * 100)}
+                          onChange={e => handleSetIntensity(def.id, Number(e.target.value))}
                           className="intensity-slider"
                         />
-                        <span className="intensity-value">{Math.round(state.intensity * 100)}%</span>
+                        <span className="intensity-value">{effectIntensity[def.id] != null ? effectIntensity[def.id] : Math.round(def.defaultIntensity * 100)}%</span>
                       </motion.div>
                     )}
                   </AnimatePresence>

@@ -15,6 +15,12 @@ const LanguageSwitcher = dynamic(
   { ssr: false }
 )
 
+// Toast 容器：客户端组件（内部订阅 toastStore）
+const ToastContainer = dynamic(
+  () => import('@/components/Toast'),
+  { ssr: false }
+)
+
 export const metadata: Metadata = {
   title: 'Live2D Layer Splitter — AI Anime Decomposition',
   description: 'Split anime character art into transparent layers for Live2D rigging. AI-powered 47-part decomposition, PSD & PNG export.',
@@ -40,6 +46,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <LanguageSwitcher />
           </div>
           {children}
+          {/* 全局 Toast 容器 */}
+          <ToastContainer />
         </I18nProvider>
       </body>
     </html>

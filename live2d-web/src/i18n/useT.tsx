@@ -2,137 +2,175 @@
 
 /**
  * 轻量 i18n hook
- * - 直接读取 JSON，支持嵌套键（a.b.c）
- * - 支持占位符替换 {name}
- * - 运行时切换 locale（localStorage 持久化）
+ * 语言状态从 zustand Store 取（唯一可信源）
+ * 本 hook 只负责：翻译文案 + 暴露 provider（兼容已有代码）
  */
-import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react'
+
 import en from './en.json'
 import ja from './ja.json'
 import zhCN from './zh-CN.json'
 import zhTW from './zh-TW.json'
+import {
+  createContext,
+  useContext,
+  useMemo,
+  type ReactNode,
+  useEffect,
+} from 'react'
+import {
+  useAppStore,
+  LOCALES,
+  type Locale,
+  LOCALE_LABELS,
+  detectBrowserLocale,
+} from '@/store/useAppStore'
 
-type Dict = typeof en
+// 语言元信息（下拉菜单用）
+export interface LocaleMeta {
+  code: Locale
+  short: string
+  label: string
+}
+export const LOCALE_SHORT: Record<Locale, string> = {
+  en: 'EN',
+  ja: 'JP',
+  'zh-CN': '简中',
+  'zh-TW': '繁中',
+}
+export const LOCALE_META: LocaleMeta[] = LOCALES.map((code) => ({
+  code,
+  short: LOCALE_SHORT[code],
+  label: LOCALE_LABELS[code],
+}))
 
-const DICTS: Record<string, Dict> = {
+// 兼容旧代码：别名导出
+export { LOCALES }
+export type LocaleCode = Locale
+
+const DICTS: Record<Locale, any> = {
   en,
   ja,
   'zh-CN': zhCN,
   'zh-TW': zhTW,
 }
 
-export const LOCALES = [
-  { code: 'en',    label: 'English',    short: 'EN' },
-  { code: 'ja',    label: '日本語',      short: 'JA' },
-  { code: 'zh-CN', label: '简体中文',    short: 'CN' },
-  { code: 'zh-TW', label: '繁體中文',    short: 'TW' },
-] as const
+type Dict = typeof en
 
-export type LocaleCode = typeof LOCALES[number]['code']
-
-const STORAGE_KEY = 'live2d-locale'
-
-function getInitialLocale(): LocaleCode {
-  if (typeof window === 'undefined') return 'en'
-  const saved = localStorage.getItem(STORAGE_KEY)
-  if (saved && saved in DICTS) return saved as LocaleCode
-  // 浏览器语言检测
-  const browser = navigator.language
-  if (browser.startsWith('ja')) return 'ja'
-  if (browser.startsWith('zh-TW') || browser.startsWith('zh-HK') || browser.startsWith('zh-MO')) return 'zh-TW'
-  if (browser.startsWith('zh')) return 'zh-CN'
-  return 'en'
+export function getByPath(obj: any, path: string, fallback?: string): string {
+  if (!path || typeof obj !== 'object') return fallback ?? path
+  const parts = path.split('.')
+  let cur: any = obj
+  for (const p of parts) {
+    if (cur == null) return fallback ?? path
+    cur = cur[p]
+  }
+  if (cur == null) return fallback ?? path
+  return String(cur)
 }
 
-/** 按点分键取嵌套值 */
-function get(obj: unknown, path: string): unknown {
-  return path.split('.').reduce<unknown>((acc, key) => {
-    if (acc && typeof acc === 'object' && key in (acc as Record<string, unknown>)) {
-      return (acc as Record<string, unknown>)[key]
+export function interpolate(
+  text: string,
+  params?: Record<string, string | number>
+): string {
+  if (!params) return text
+  return text.replace(/\{(\w+)\}/g, (_, k) => {
+    return params[k] != null ? String(params[k]) : `{${k}}`
+  })
+}
+
+export function translate(
+  locale: Locale,
+  key: string,
+  arg2?: Record<string, string | number> | string,
+  arg3?: Record<string, string | number> | string
+): string {
+  let params: Record<string, string | number> | undefined
+  let fallback: string | undefined
+  // 支持多种形式: t(k), t(k, params), t(k, fallback), t(k, params, fallback), t(k, fallback, params)
+  if (typeof arg2 === 'object') {
+    params = arg2
+    if (typeof arg3 === 'string') fallback = arg3
+  } else if (typeof arg2 === 'string') {
+    if (typeof arg3 === 'object') {
+      // t(k, fallback, params)
+      fallback = arg2
+      params = arg3
+    } else {
+      // t(k, fallback)
+      fallback = arg2
     }
-    return undefined
-  }, obj)
+  }
+  const dict: Dict = (DICTS[locale] || DICTS.en) as Dict
+  const enDict: Dict = DICTS.en as Dict
+  let text = getByPath(dict, key, undefined)
+  if (text === undefined) text = getByPath(enDict, key, fallback ?? key)
+  return interpolate(text, params)
 }
 
-/** 占位符替换 */
-function interpolate(str: string, vars?: Record<string, string | number>): string {
-  if (!vars) return str
-  return str.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''))
+// ---------- Hook ----------
+
+export interface UseTResult {
+  locale: Locale
+  setLocale: (l: Locale) => void
+  locales: Locale[]
+  labels: Record<Locale, string>
+  t: (
+    key: string,
+    arg2?: Record<string, string | number> | string,
+    arg3?: Record<string, string | number> | string
+  ) => string
 }
 
-// ====== Context ======
+export function useT(): UseTResult {
+  const locale = useAppStore((s) => s.locale)
+  const setLocale = useAppStore((s) => s.setLocale)
+  const t = (
+    key: string,
+    arg2?: Record<string, string | number> | string,
+    arg3?: Record<string, string | number> | string
+  ) => translate(locale, key, arg2, arg3)
+  return { locale, setLocale, locales: LOCALES, labels: LOCALE_LABELS, t }
+}
+
+// 兼容旧代码：alias
+export const useI18n = useT
+
+// ---------- Provider（兼容旧代码，实际上状态都在 zustand 里） ----------
+
 interface I18nContextValue {
-  locale: LocaleCode
-  setLocale: (code: LocaleCode) => void
-  t: (key: string, vars?: Record<string, string | number>) => string
+  locale: Locale
+  setLocale: (l: Locale) => void
 }
 
-const I18nContext = createContext<I18nContextValue | null>(null)
+const I18nContext = createContext<I18nContextValue>({
+  locale: 'en',
+  setLocale: () => {},
+})
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<LocaleCode>(getInitialLocale)
+  const locale = useAppStore((s) => s.locale)
+  const setLocale = useAppStore((s) => s.setLocale)
 
-  const setLocale = useCallback((code: LocaleCode) => {
-    setLocaleState(code)
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_KEY, code)
-      document.documentElement.lang = code
+  // 首次加载自动检测浏览器语言
+  useEffect(() => {
+    const stored = localStorage.getItem('live2d-web-store')
+    if (!stored) {
+      const detected = detectBrowserLocale('en')
+      if (detected !== locale) setLocale(detected)
     }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // <html lang=""> 同步
   useEffect(() => {
     if (typeof document !== 'undefined') {
       document.documentElement.lang = locale
     }
   }, [locale])
 
-  const t = useCallback(
-    (key: string, vars?: Record<string, string | number>) => {
-      const dict = DICTS[locale] ?? DICTS.en
-      const val = get(dict, key)
-      if (typeof val !== 'string') {
-        // fallback to English
-        const fallback = get(DICTS.en, key)
-        if (typeof fallback === 'string') return interpolate(fallback, vars)
-        if (process.env.NODE_ENV !== 'production') {
-          console.warn(`[i18n] missing key: ${key}`)
-        }
-        return key
-      }
-      return interpolate(val, vars)
-    },
-    [locale]
-  )
-
-  return (
-    <I18nContext.Provider value={{ locale, setLocale, t }}>
-      {children}
-    </I18nContext.Provider>
-  )
+  const value = useMemo(() => ({ locale, setLocale }), [locale, setLocale])
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }
 
-export function useT() {
-  const ctx = useContext(I18nContext)
-  if (!ctx) {
-    // SSR fallback
-    return (key: string, vars?: Record<string, string | number>) => {
-      const val = get(DICTS.en, key)
-      return typeof val === 'string' ? interpolate(val, vars) : key
-    }
-  }
-  return ctx.t
+export function useI18nContext() {
+  return useContext(I18nContext)
 }
-
-export function useI18n() {
-  const ctx = useContext(I18nContext)
-  if (!ctx) {
-    return {
-      locale: 'en' as LocaleCode,
-      setLocale: () => {},
-      t: (key: string) => key,
-    }
-  }
-  return ctx
-}
-
-export type TFunc = (key: string, vars?: Record<string, string | number>) => string

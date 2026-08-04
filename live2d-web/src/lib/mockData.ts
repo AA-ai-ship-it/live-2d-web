@@ -242,3 +242,25 @@ export const EXPORT_FORMATS: { id: ExportFormat; nameKey: string; icon: string }
   { id: 'live2d',  nameKey: 'animate.export.live2d',  icon: 'L2D' },
   { id: 'video',   nameKey: 'animate.export.video',   icon: 'MP4' },
 ]
+
+// ====== 效果分组（按 category）======
+export const EFFECT_GROUPS: Record<EffectCategory, EffectDef[]> = {
+  face: EFFECT_DEFS.filter(e => e.category === 'face'),
+  body: EFFECT_DEFS.filter(e => e.category === 'body'),
+  hair: EFFECT_DEFS.filter(e => e.category === 'hair'),
+  scene: EFFECT_DEFS.filter(e => e.category === 'scene'),
+}
+
+// ====== EffectInstance（预设效果项，用于 setActiveEffectsFromPreset）======
+export interface EffectInstance {
+  id: string
+  defaultActive: boolean
+  defaultIntensity: number // 0-100，与 store 中 effectIntensity 一致
+}
+
+// ====== 默认效果预设（呼吸+眨眼 默认开启）======
+export const DEFAULT_EFFECTS: EffectInstance[] = EFFECT_DEFS.map(def => ({
+  id: def.id,
+  defaultActive: def.id === 'breath' || def.id === 'blink',
+  defaultIntensity: Math.round(def.defaultIntensity * 100),
+}))

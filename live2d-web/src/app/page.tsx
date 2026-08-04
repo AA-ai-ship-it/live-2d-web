@@ -1,16 +1,18 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import api, {
-  HealthInfo,
-  DEFAULT_HEALTH,
-  NSFWCheckResult,
-  NSFWReviewError,
-  NSFWRejectedErrorErr,
-} from '@/lib/api'
 import { useT } from '@/i18n/useT'
+import { useAppStore } from '@/store/useAppStore'
+import { toast } from '@/store/toastStore'
+import {
+  uploadImage as apiUploadImage,
+  checkNsfw as apiCheckNsfw,
+  DEFAULT_HEALTH,
+  type NsfwResult,
+} from '@/lib/api'
+import { AppError } from '@/lib/errors'
 
 const RESOLUTIONS = [
   { px: 512, tagKey: 'options.resolution.fastest' },
@@ -19,37 +21,57 @@ const RESOLUTIONS = [
 ]
 
 export default function UploadPage() {
-  const t = useT()
+  const { t, locale } = useT()
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // ---- Zustand Store（跨页面共享） ----
+  const health = useAppStore((s) => s.health)
+  const nsfw = useAppStore((s) => s.nsfw)
+  const setNsfw = useAppStore((s) => s.setNsfw)
+  const setTask = useAppStore((s) => s.setTask)
+  const clearTask = useAppStore((s) => s.clearTask)
+  const loadHealth = useAppStore((s) => s.loadHealth)
+
+  // ---- 页面私有 State ----
   const [file, setFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState('')
   const [resolution, setResolution] = useState(768)
   const [tblrSplit, setTblrSplit] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
   const [agreed, setAgreed] = useState(false)
-  const [health, setHealth] = useState<HealthInfo>({ ...DEFAULT_HEALTH })
   const [checking, setChecking] = useState(false)
   const [healthExpanded, setHealthExpanded] = useState(false)
   const [dragging, setDragging] = useState(false)
-
-  // NSFW 检测状态
   const [nsfwChecking, setNsfwChecking] = useState(false)
-  const [nsfwReview, setNsfwReview] = useState<NSFWCheckResult | null>(null)
+  const [nsfwReviewPopup, setNsfwReviewPopup] = useState<NsfwResult | null>(
+    null
+  )
 
+  // ---- Derived ----
+  const online = health.status !== 'offline'
+  const gpuAvailable = health.gpu_ok
+  const modelLoaded = health.model_loaded
+  const dotClass = online ? (gpuAvailable ? 'green' : 'yellow') : 'red'
+  const nsfwEnabled = !!nsfw || !!health.nsfw_check_available ? true : false
+
+  // ---- 首次加载健康检查（带节流）----
+  useEffect(() => {
+    loadHealth(false).catch(() => {})
+  }, [loadHealth])
+
+  // ---- 文件变更 ----
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0]
     if (selected) {
       setFile(selected)
       setPreviewUrl(URL.createObjectURL(selected))
-      setError('')
-      setNsfwReview(null)
+      setNsfwReviewPopup(null)
+      clearTask()
+      setNsfw(null)
     }
   }
 
-  // 拖拽上传
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setDragging(false)
@@ -57,147 +79,134 @@ export default function UploadPage() {
     if (selected && selected.type.startsWith('image/')) {
       setFile(selected)
       setPreviewUrl(URL.createObjectURL(selected))
-      setError('')
-      setNsfwReview(null)
+      setNsfwReviewPopup(null)
+      clearTask()
+      setNsfw(null)
     }
   }
 
-  const checkHealth = async () => {
+  // ---- 手动刷新健康检查 ----
+  const checkHealth = useCallback(async () => {
     setChecking(true)
     try {
-      const info = await api.healthCheck()
-      setHealth(info)
-      // 离线时自动展开详情
-      if (!info.online) setHealthExpanded(true)
+      const info = await loadHealth(true)
+      if (info.status === 'offline') setHealthExpanded(true)
     } catch {
-      setHealth({ ...DEFAULT_HEALTH, error: 'Health check failed' })
-      setHealthExpanded(true)
+      /* ignore */
     } finally {
       setChecking(false)
     }
-  }
+  }, [loadHealth])
 
-  useEffect(() => {
-    checkHealth()
-  }, [])
-
-  /**
-   * 启动分割流程（含 NSFW 预检）
-   *
-   * 流程：
-   * 1. 前端先调 /api/check_nsfw 预检（快速反馈，避免浪费上传带宽）
-   * 2. 根据结果：
-   *    - pass / skipped → 直接调 /api/split
-   *    - review → 显示警告，用户确认后用 skip_nsfw_check=true 调 /api/split
-   *    - reject → 拒绝，不可覆盖
-   * 3. /api/split 内部会再做一次 NSFW 检测（防止前端绕过）
-   *    - 返回 202 → 同 review 流程
-   *    - 返回 400 NSFW_REJECTED → 同 reject 流程
-   */
+  // ---- 启动拆分（含 NSFW 预检 + Review 交互）----
   const startSplit = async (skipNSFW = false) => {
     if (!file) {
-      setError(t('error.selectImage'))
+      toast.error(t('error.selectImage'))
       return
     }
     if (!agreed) {
-      setError(t('error.agreeTerms'))
+      toast.warn(t('error.agreeTerms'))
       return
     }
-    if (!health.online) {
-      setError(t('error.backendOffline'))
+    if (!online) {
+      toast.error(t('error.backendOffline'))
       return
     }
 
     setLoading(true)
-    setError('')
 
     try {
-      // ====== 第一步：前端 NSFW 预检（仅当未跳过时）======
-      if (!skipNSFW && health.nsfw_check_enabled) {
+      // 第一步：前端 NSFW 预检（快，避免浪费带宽）
+      if (!skipNSFW && (nsfw || nsfwEnabled || gpuAvailable)) {
         setNsfwChecking(true)
         try {
-          const nsfwResult = await api.checkNSFW(file)
+          const nsfwRes = await apiCheckNsfw(file)
+          setNsfw(nsfwRes)
           setNsfwChecking(false)
 
-          if (nsfwResult.action === 'reject') {
-            // 高置信度 NSFW：直接拒绝，不可覆盖
-            setError(formatNSFWError(nsfwResult))
+          if (nsfwRes.status === 'NSFW_REJECT') {
+            toast.error(
+              `${t('error.nsfwRejected')}${
+                nsfwRes.message ? ': ' + nsfwRes.message : ''
+              }`
+            )
             setLoading(false)
             return
           }
-
-          if (nsfwResult.action === 'review') {
-            // 中等置信度：进入人工复审态，等用户确认
-            setNsfwReview(nsfwResult)
+          if (nsfwRes.status === 'NSFW_REVIEW') {
+            // 进入人工复审态
+            setNsfwReviewPopup(nsfwRes)
             setLoading(false)
             return
           }
-
-          // pass / skipped → 继续上传
-        } catch (nsfwErr) {
+        } catch (err) {
           setNsfwChecking(false)
-          // NSFW 预检失败不阻断流程，交给后端二次检测
-          console.warn('[NSFW] Pre-check failed, will rely on backend check:', nsfwErr)
+          // 预检失败不阻断，由后端二次检测兜底
+          console.warn('[NSFW] pre-check failed, relying on backend', err)
         }
       }
 
-      // ====== 第二步：上传分割 ======
-      const result = await api.uploadImage(file, {
+      // 第二步：上传 + 启动拆分
+      const init = await apiUploadImage(file, {
         resolution,
-        inferenceSteps: 20,
-        tblrSplit,
-        skipNSFWCheck: skipNSFW,  // 人工复审覆盖时跳过后端检测
+        inference_steps: 20,
+        tblr_split: tblrSplit,
+        onNsfwReview: async ({ score, labels }) => {
+          // 后端返回 NSFW_REVIEW 时的二次确认
+          const confirmed = window.confirm(
+            `${t('nsfw.title')} (score: ${(score * 100).toFixed(
+              0
+            )}%)\n${t('nsfw.continue')}?`
+          )
+          return confirmed
+        },
       })
-      router.push(`/result/${result.task_id}`)
 
+      // 写入 Store，结果页/动画实验室直接读
+      setTask({
+        task_id: init.task_id,
+        status: 'processing',
+        message: init.message,
+        elapsed: 0,
+        resolution,
+        inference_steps: 20,
+        nsfw_status: nsfw?.status || nsfwReviewPopup?.status || 'PASS',
+      })
+      router.push(`/result/${init.task_id}`)
     } catch (err) {
-      // 后端返回 202：NSFW 需要人工复审
-      if (err instanceof NSFWReviewError) {
-        setNsfwReview(err.result.nsfw_result)
-        setLoading(false)
-        return
-      }
-
-      // 后端返回 400 NSFW_REJECTED：拒绝，不可覆盖
-      if (err instanceof NSFWRejectedErrorErr) {
-        setError(formatNSFWError(err.result.nsfw_result))
-        setLoading(false)
-        return
-      }
-
-      // 其他错误
-      const msg = err instanceof Error ? err.message : 'Unknown error'
-      setError(t('error.uploadFailed', { message: msg }))
-    } finally {
       setLoading(false)
-      setNsfwChecking(false)
+      if (err instanceof AppError) {
+        if (err.code === 'NSFW_REJECT') {
+          toast.error(
+            err.getMessage(locale) +
+              (err.rawMessage ? ': ' + err.rawMessage : '')
+          )
+          return
+        }
+        if (err.code === 'NSFW_REVIEW') {
+          setNsfwReviewPopup({
+            status: 'NSFW_REVIEW',
+            score: 0.6,
+            labels: [],
+            message: err.rawMessage,
+          })
+          return
+        }
+        toast.error(err.getMessage(locale))
+        return
+      }
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      toast.error(t('error.uploadFailed', { message: msg }))
     }
   }
 
-  // 格式化 NSFW 拒绝错误信息
-  const formatNSFWError = (result: NSFWCheckResult): string => {
-    const labels = result.labels.map(l =>
-      `${l.name} (${Math.round(l.confidence * 100)}%)`
-    ).join(', ')
-    return t('error.nsfwRejected', { labels })
-  }
-
-  // 用户点击「坚持上传」（人工覆盖）
+  // ---- 用户坚持上传（人工覆盖 NSFW review）----
   const handleForceUpload = () => {
-    setNsfwReview(null)
+    setNsfwReviewPopup(null)
     startSplit(true)
   }
 
-  // 用户点击「取消」
-  const handleCancelReview = () => {
-    setNsfwReview(null)
-    setLoading(false)
-  }
-
-  const { online, gpu_available, seethrough_available, status, elapsed,
-          error: hError, error_tip, nsfw_check_enabled, nsfw_check_available } = health
-  const dotClass = online ? (gpu_available ? 'green' : 'yellow') : 'red'
-
+  // ---- UI ----
   return (
     <div className="container">
       {/* ====== Hero ====== */}
@@ -208,7 +217,6 @@ export default function UploadPage() {
         transition={{ duration: 0.4 }}
       >
         <div className="brand-row">
-          {/* SVG Logo：三层堆叠，象征图层拆分 */}
           <svg className="brand-logo" viewBox="0 0 36 36" fill="none">
             <rect x="6" y="6" width="20" height="20" rx="4" fill="url(#g1)" opacity="0.4" />
             <rect x="10" y="10" width="20" height="20" rx="4" fill="url(#g1)" opacity="0.7" />
@@ -226,7 +234,7 @@ export default function UploadPage() {
         <p className="hero-subtitle">{t('brand.subtitle')}</p>
       </motion.div>
 
-      {/* ====== Health Bar（紧凑状态条）====== */}
+      {/* ====== Health Bar ====== */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
@@ -238,29 +246,33 @@ export default function UploadPage() {
         >
           <div className={`dot ${dotClass}`} />
           <div className="health-summary">
-            <span>{online ? t('health.online') : t('health.offline')}</span>
+            <span>
+              {online
+                ? t('health.online')
+                : t('health.offline')}
+            </span>
             {online && (
               <>
                 <span className="sep">·</span>
-                <span className={`badge ${gpu_available ? 'ok' : 'bad'}`}>
-                  {t('health.gpu')} {gpu_available ? '✓' : '✗'}
+                <span className={`badge ${gpuAvailable ? 'ok' : 'bad'}`}>
+                  {t('health.gpu')} {gpuAvailable ? '✓' : '✗'}
                 </span>
                 <span className="sep">·</span>
-                <span className={`badge ${seethrough_available ? 'ok' : 'bad'}`}>
-                  {t('health.model')} {seethrough_available ? '✓' : '✗'}
+                <span className={`badge ${modelLoaded ? 'ok' : 'bad'}`}>
+                  {t('health.model')} {modelLoaded ? '✓' : '✗'}
                 </span>
-                {nsfw_check_enabled && (
-                  <>
-                    <span className="sep">·</span>
-                    <span className={`badge ${nsfw_check_available ? 'ok' : 'muted'}`}>
-                      {t('health.nsfw')} {nsfw_check_available ? '✓' : '—'}
-                    </span>
-                  </>
-                )}
+                <span className="sep">·</span>
+                <span className="badge muted">
+                  {t('health.queue')} {health.queue_size}/{health.queue_limit}
+                </span>
               </>
             )}
           </div>
-          {elapsed > 0 && <span className="health-elapsed">{elapsed}ms</span>}
+          <span className="health-elapsed">
+            {health.avg_split_seconds > 0
+              ? `${health.avg_split_seconds}s/task`
+              : ''}
+          </span>
           <svg
             className={`refresh-icon ${checking ? 'spin' : ''}`}
             viewBox="0 0 24 24"
@@ -269,14 +281,16 @@ export default function UploadPage() {
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
-            onClick={(e) => { e.stopPropagation(); checkHealth() }}
+            onClick={(e) => {
+              e.stopPropagation()
+              checkHealth()
+            }}
           >
             <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
             <path d="M21 3v5h-5" />
           </svg>
         </div>
 
-        {/* 展开详情 / 离线错误 */}
         <AnimatePresence>
           {healthExpanded && (
             <motion.div
@@ -290,34 +304,46 @@ export default function UploadPage() {
                 <div className="health-detail">
                   <div className="row">
                     <span className="label">{t('health.gpu')}</span>
-                    <span className={gpu_available ? 'ok' : 'bad'}>
-                      {gpu_available ? t('health.available') : t('health.unavailable')}
+                    <span className={gpuAvailable ? 'ok' : 'bad'}>
+                      {gpuAvailable
+                        ? t('health.available')
+                        : t('health.unavailable')}
                     </span>
                   </div>
                   <div className="row">
                     <span className="label">{t('health.model')}</span>
-                    <span className={seethrough_available ? 'ok' : 'bad'}>
-                      {seethrough_available ? t('health.loaded') : t('health.notFound')}
+                    <span className={modelLoaded ? 'ok' : 'bad'}>
+                      {modelLoaded ? t('health.loaded') : t('health.notFound')}
                     </span>
                   </div>
                   <div className="row">
                     <span className="label">{t('health.nsfw')}</span>
-                    <span className={nsfw_check_available ? 'ok' : 'val'}>
-                      {nsfw_check_available ? t('health.active') : (nsfw_check_enabled ? t('health.unavailable') : t('health.off'))}
+                    <span className="val">
+                      {nsfwEnabled ? t('health.active') : t('health.off')}
+                    </span>
+                  </div>
+                  <div className="row">
+                    <span className="label">GPU VRAM</span>
+                    <span className="val">
+                      {health.gpu_memory_used_gb.toFixed(1)} / {health.gpu_memory_gb.toFixed(1)} GB
                     </span>
                   </div>
                   <div className="row">
                     <span className="label">{t('health.status')}</span>
-                    <span className="val">{status || '—'}</span>
+                    <span className="val">
+                      {health.status} · v{health.version}
+                    </span>
                   </div>
                 </div>
               ) : (
-                hError && (
-                  <div className="health-detail">
-                    <div className="health-error">{hError}</div>
-                    {error_tip && <div className="health-tip">{error_tip}</div>}
+                <div className="health-detail">
+                  <div className="health-error">
+                    {t('health.offlineTip')}
                   </div>
-                )
+                  <div className="health-tip">
+                    {t('health.offlineHint')}
+                  </div>
+                </div>
               )}
             </motion.div>
           )}
@@ -328,7 +354,10 @@ export default function UploadPage() {
       <motion.div
         className={`upload-area ${previewUrl ? 'has-image' : ''} ${dragging ? 'dragging' : ''}`}
         onClick={() => fileInputRef.current?.click()}
-        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDragging(true)
+        }}
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}
         initial={{ opacity: 0, y: 12 }}
@@ -340,18 +369,32 @@ export default function UploadPage() {
           <>
             <button
               className="change-btn"
-              onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click() }}
+              onClick={(e) => {
+                e.stopPropagation()
+                fileInputRef.current?.click()
+              }}
             >
               {t('upload.change')}
             </button>
             <div className="preview-wrap">
-              <img className="preview-img" src={previewUrl} alt="Preview" />
+              <img
+                className="preview-img"
+                src={previewUrl}
+                alt="Preview"
+              />
             </div>
           </>
         ) : (
           <div>
             <div className="upload-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                 <polyline points="17 8 12 3 7 8" />
                 <line x1="12" y1="3" x2="12" y2="15" />
@@ -378,10 +421,8 @@ export default function UploadPage() {
         transition={{ duration: 0.4, delay: 0.3 }}
       >
         <div className="settings-title">{t('options.title')}</div>
-
-        {/* 分辨率卡片选择器 */}
         <div className="res-grid">
-          {RESOLUTIONS.map(r => (
+          {RESOLUTIONS.map((r) => (
             <div
               key={r.px}
               className={`res-card ${resolution === r.px ? 'active' : ''}`}
@@ -394,12 +435,14 @@ export default function UploadPage() {
             </div>
           ))}
         </div>
-
-        {/* 左右拆分开关 */}
         <div className="option-row">
           <div>
-            <span className="option-label">{t('options.tblrSplit.label')}</span>
-            <span className="option-desc">{t('options.tblrSplit.desc')}</span>
+            <span className="option-label">
+              {t('options.tblrSplit.label')}
+            </span>
+            <span className="option-desc">
+              {t('options.tblrSplit.desc')}
+            </span>
           </div>
           <div
             className={`switch ${tblrSplit ? 'on' : ''}`}
@@ -410,19 +453,9 @@ export default function UploadPage() {
         </div>
       </motion.div>
 
-      {error && (
-        <motion.div
-          className="error-msg"
-          initial={{ opacity: 0, scale: 0.98 }}
-          animate={{ opacity: 1, scale: 1 }}
-        >
-          {error}
-        </motion.div>
-      )}
-
       {/* ====== NSFW 人工复审弹窗 ====== */}
       <AnimatePresence>
-        {nsfwReview && (
+        {nsfwReviewPopup && (
           <motion.div
             className="nsfw-review-overlay"
             initial={{ opacity: 0 }}
@@ -439,21 +472,28 @@ export default function UploadPage() {
               <div className="nsfw-review-icon">⚠</div>
               <h3 className="nsfw-review-title">{t('nsfw.title')}</h3>
               <p className="nsfw-review-desc">{t('nsfw.desc')}</p>
-              <div className="nsfw-labels">
-                {nsfwReview.labels.map((label, idx) => (
-                  <div className="nsfw-label-item" key={idx}>
-                    <span className="nsfw-label-name">{label.name}</span>
+              {nsfwReviewPopup.score > 0 && (
+                <div className="nsfw-labels">
+                  <div className="nsfw-label-item">
+                    <span className="nsfw-label-name">
+                      {t('nsfw.riskScore')}
+                    </span>
                     <span className="nsfw-label-conf">
-                      {Math.round(label.confidence * 100)}%
+                      {(nsfwReviewPopup.score * 100).toFixed(0)}%
                     </span>
                   </div>
-                ))}
-              </div>
+                  {(nsfwReviewPopup.labels || []).slice(0, 4).map((l, i) => (
+                    <div className="nsfw-label-item" key={i}>
+                      <span className="nsfw-label-name">{l}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               <p className="nsfw-review-warning">{t('nsfw.warning')}</p>
               <div className="nsfw-review-actions">
                 <button
                   className="nsfw-btn-cancel"
-                  onClick={handleCancelReview}
+                  onClick={() => setNsfwReviewPopup(null)}
                   disabled={loading}
                 >
                   {t('nsfw.cancel')}
@@ -503,10 +543,12 @@ export default function UploadPage() {
         whileHover={{ y: -2 }}
         whileTap={{ y: 0 }}
       >
-        {nsfwChecking ? t('action.checking') : (loading ? t('action.uploading') : t('action.start'))}
-        {!loading && !nsfwChecking && (
-          <span className="arrow">→</span>
-        )}
+        {nsfwChecking
+          ? t('action.checking')
+          : loading
+            ? t('action.uploading')
+            : t('action.start')}
+        {!loading && !nsfwChecking && <span className="arrow">→</span>}
       </motion.button>
 
       {/* ====== Animation Lab 入口 ====== */}
@@ -516,8 +558,20 @@ export default function UploadPage() {
         animate={{ opacity: 1 }}
         transition={{ delay: 0.55 }}
       >
-        <button className="animate-link-btn" onClick={() => router.push('/animate')}>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <button
+          className="animate-link-btn"
+          onClick={() => router.push('/animate')}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="16"
+            height="16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <path d="M5 3l14 9-14 9V3z" />
           </svg>
           <span>Animation Lab (Demo)</span>

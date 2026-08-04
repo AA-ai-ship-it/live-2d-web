@@ -1,420 +1,466 @@
 /**
- * Web 版后端 API 封装
- * 从 Taro 小程序版移植，wx.* → fetch / FormData
+ * 后端 API 封装
+ * 所有方法调用统一 request wrapper（自动处理：超时 / 状态码 / NSFW / toast 错误提示）
  */
+import { http, getApiBase, UPLOAD_TIMEOUT } from './request'
+import { AppError } from './errors'
 
-// ========================
-// 后端地址配置
-// ========================
-// 开发：直连 AutoDL
-// 生产：用自有域名（Cloudflare / Vercel 代理）
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'https://u1100513-bdd3-419021b1.westb.seetacloud.com:8443'
+// ============== Types ==============
 
-// ========================
-// 自定义错误类（便于前端 instanceof 判断）
-// ========================
-
-/** NSFW 需要人工复审（HTTP 202），前端可让用户选择「坚持上传」 */
-export class NSFWReviewError extends Error {
-  result: NSFWReviewRequired
-  constructor(result: NSFWReviewRequired) {
-    super(result.message || 'NSFW review required')
-    this.name = 'NSFWReviewError'
-    this.result = result
-  }
-}
-
-/** NSFW 被拒（HTTP 400），不可覆盖 */
-export class NSFWRejectedErrorErr extends Error {
-  result: NSFWRejectedError
-  constructor(result: NSFWRejectedError) {
-    super(result.message || 'Image rejected by NSFW detection')
-    this.name = 'NSFWRejectedErrorErr'
-    this.result = result
-  }
-}
-
-// ========================
-// 类型定义（与小程序版一致）
-// ========================
-
-export interface TaskInfo {
-  task_id: string
-  status: 'pending' | 'running' | 'succeeded' | 'completed' | 'failed'
-  message: string
-  progress?: number
-  result?: {
-    psd_file?: string
-    preview_images?: PreviewImage[]
-    output_dir?: string
-  }
-  layers?: LayerInfo[]
-  image_width: number
-  image_height: number
-  elapsed: number
-}
-
-export interface PreviewImage {
-  name: string
-  path: string
+export interface HealthInfo {
+  status: 'online' | 'offline' | 'warning'
+  gpu_ok: boolean
+  model_loaded: boolean
+  nsfw_check_available: boolean
+  queue_size: number
+  queue_limit: number
+  avg_split_seconds: number
+  version: string
+  uptime_seconds: number
+  gpu_memory_gb: number
+  gpu_memory_used_gb: number
 }
 
 export interface LayerInfo {
   id: string
   name: string
   part_type: string
-  group: string
-  z_index: number
-  bbox: { left: number; top: number; width: number; height: number } | null
   file_name: string
-  file_size: number
-  source: string
-  _path?: string
+  width: number
+  height: number
+  left: number
+  top: number
+  z_index: number
+  group?: string
+  url?: string
+}
+
+export interface TaskInfo {
+  task_id: string
+  status: 'pending' | 'processing' | 'done' | 'failed'
+  message?: string
+  progress?: number
+  elapsed: number
+  resolution?: number
+  inference_steps?: number
+  nsfw_status?: 'PASS' | 'NSFW_REVIEW' | 'NSFW_REJECT' | 'SKIP'
+  layers?: LayerInfo[]
+  psd_url?: string
+  original_url?: string
 }
 
 export interface UploadOptions {
-  resolution: number
-  inferenceSteps: number
-  tblrSplit: boolean
-  skipNSFWCheck?: boolean  // 人工复审后覆盖提交时设为 true
+  resolution?: number
+  inference_steps?: number
+  tblr_split?: boolean
+  group_offload?: boolean
+  /** 当 NSFW 需要 review 时的回调（让用户确认后再继续） */
+  onNsfwReview?: (data: { score: number; labels: string[] }) => Promise<boolean>
+  /** 上传进度回调 0-100 */
+  onProgress?: (percent: number) => void
 }
 
-// ========================
-// NSFW 检测类型
-// ========================
-
-export interface NSFWLabel {
-  name: string
-  confidence: number  // 0-1
-  parent_categories: string[]
+export interface NsfwResult {
+  status: 'PASS' | 'NSFW_REVIEW' | 'NSFW_REJECT' | 'SKIP'
+  score: number
+  labels: string[]
+  message?: string
 }
 
-export interface NSFWCheckResult {
-  enabled: boolean       // NSFW 检测是否启用
-  checked: boolean       // 是否实际执行了检测
-  passed: boolean        // 是否通过（action == "pass"）
-  action: 'pass' | 'review' | 'reject' | 'skipped'
-  max_confidence: number // 0-1
-  labels: NSFWLabel[]
-  error: string
-}
-
-// /api/split 返回 202 时的响应体（需要人工复审）
-export interface NSFWReviewRequired {
-  code: 'NSFW_REVIEW_REQUIRED'
-  message: string
-  nsfw_result: NSFWCheckResult
-}
-
-// /api/split 返回 400 时的错误体（NSFW 被拒）
-export interface NSFWRejectedError {
-  code: 'NSFW_REJECTED'
-  message: string
-  nsfw_result: NSFWCheckResult
-}
-
-export interface HealthInfo {
-  online: boolean
+export interface SplitInitiateResult {
+  task_id: string
   status: string
-  seethrough_available: boolean
-  gpu_available: boolean
-  nsfw_check_enabled: boolean   // NSFW 检测是否启用
-  nsfw_check_available: boolean // NSFW 检测是否可用（AWS 凭证已配置）
-  elapsed: number
-  error: string
-  error_tip: string
+  message?: string
+  nsfw?: NsfwResult
 }
+
+// ============== Defaults ==============
 
 export const DEFAULT_HEALTH: HealthInfo = {
-  online: false,
-  status: '',
-  seethrough_available: false,
-  gpu_available: false,
-  nsfw_check_enabled: false,
+  status: 'offline',
+  gpu_ok: false,
+  model_loaded: false,
   nsfw_check_available: false,
-  elapsed: 0,
-  error: '',
-  error_tip: '',
+  queue_size: 0,
+  queue_limit: 1,
+  avg_split_seconds: 40,
+  version: 'unknown',
+  uptime_seconds: 0,
+  gpu_memory_gb: 0,
+  gpu_memory_used_gb: 0,
 }
 
-// ========================
-// 工具函数（与小程序版一致）
-// ========================
+// ============== Helpers ==============
 
-const LAYER_GROUPS: Record<string, string> = {
-  'front hair': 'Hair', 'back hair': 'Hair',
-  'headwear': 'Head Accessories', 'head': 'Head',
-  'face': 'Face', 'irides': 'Eyes', 'eyebrow': 'Eyes',
-  'eyewhite': 'Eyes', 'eyelash': 'Eyes', 'eyewear': 'Eyes',
-  'ears': 'Ears', 'earwear': 'Ears',
-  'nose': 'Nose', 'mouth': 'Mouth',
-  'neck': 'Neck', 'neckwear': 'Neck',
-  'topwear': 'Top', 'handwear': 'Hands',
-  'bottomwear': 'Bottom', 'legwear': 'Legs', 'footwear': 'Feet',
-  'tail': 'Extras', 'wings': 'Extras', 'objects': 'Extras',
-  'src_img': 'Source', 'src_head': 'Source', 'reconstruction': 'Source',
+function safeResolve<T>(promise: Promise<T>, fallback: T): Promise<T> {
+  return promise.catch(() => fallback)
+}
+
+const GROUP_ORDER = [
+  'Head',
+  'Face',
+  'Torso',
+  'Arm',
+  'Leg',
+  'Accessory',
+  'Other',
+]
+
+const PART_GROUP_MAP: Record<string, string> = {
+  // 头部类
+  hair: 'Head',
+  hair_front: 'Head',
+  hair_back: 'Head',
+  hair_side: 'Head',
+  ahoge: 'Head',
+  head: 'Head',
+  // 脸部类
+  face: 'Face',
+  eyebrow: 'Face',
+  eyelash: 'Face',
+  eyewhite: 'Face',
+  eye: 'Face',
+  eye_left: 'Face',
+  eye_right: 'Face',
+  iris: 'Face',
+  iris_left: 'Face',
+  iris_right: 'Face',
+  pupil: 'Face',
+  nose: 'Face',
+  mouth: 'Face',
+  lip: 'Face',
+  teeth: 'Face',
+  tongue: 'Face',
+  blush: 'Face',
+  // 躯干类
+  neck: 'Torso',
+  body: 'Torso',
+  torso: 'Torso',
+  chest: 'Torso',
+  breast: 'Torso',
+  shirt: 'Torso',
+  cloth: 'Torso',
+  collar: 'Torso',
+  // 手臂类
+  arm: 'Arm',
+  arm_left: 'Arm',
+  arm_right: 'Arm',
+  shoulder: 'Arm',
+  shoulder_left: 'Arm',
+  shoulder_right: 'Arm',
+  sleeve: 'Arm',
+  sleeve_left: 'Arm',
+  sleeve_right: 'Arm',
+  hand: 'Arm',
+  hand_left: 'Arm',
+  hand_right: 'Arm',
+  finger: 'Arm',
+  finger_left: 'Arm',
+  finger_right: 'Arm',
+  // 腿部类
+  leg: 'Leg',
+  leg_left: 'Leg',
+  leg_right: 'Leg',
+  thigh: 'Leg',
+  thigh_left: 'Leg',
+  thigh_right: 'Leg',
+  calf: 'Leg',
+  calf_left: 'Leg',
+  calf_right: 'Leg',
+  knee: 'Leg',
+  foot: 'Leg',
+  foot_left: 'Leg',
+  foot_right: 'Leg',
+  footwear: 'Leg',
+  footwear_left: 'Leg',
+  footwear_right: 'Leg',
+  pants: 'Leg',
+  skirt: 'Leg',
+  sock: 'Leg',
+  sock_left: 'Leg',
+  sock_right: 'Leg',
+  // 配饰类
+  ears: 'Accessory',
+  ears_left: 'Accessory',
+  ears_right: 'Accessory',
+  ear: 'Accessory',
+  ear_left: 'Accessory',
+  ear_right: 'Accessory',
+  earwear: 'Accessory',
+  earwear_left: 'Accessory',
+  earwear_right: 'Accessory',
+  earring: 'Accessory',
+  earring_left: 'Accessory',
+  earring_right: 'Accessory',
+  eyewear: 'Accessory',
+  glasses: 'Accessory',
+  headset: 'Accessory',
+  headwear: 'Accessory',
+  hat: 'Accessory',
+  hair_ornament: 'Accessory',
+  hairpin: 'Accessory',
+  bow: 'Accessory',
+  ribbon: 'Accessory',
+  necklace: 'Accessory',
+  choker: 'Accessory',
+  tie: 'Accessory',
+  brooch: 'Accessory',
+  button: 'Accessory',
+  badge: 'Accessory',
+  tail: 'Accessory',
+  wings: 'Accessory',
+  horn: 'Accessory',
+  horn_left: 'Accessory',
+  horn_right: 'Accessory',
+  handwear: 'Accessory',
+  handwear_left: 'Accessory',
+  handwear_right: 'Accessory',
+  glove: 'Accessory',
+  bracelet: 'Accessory',
+  ring: 'Accessory',
+  other: 'Other',
+}
+
+export function partToGroup(partType: string): string {
+  if (!partType) return 'Other'
+  const direct = PART_GROUP_MAP[partType.toLowerCase()]
+  if (direct) return direct
+  // fuzzy prefix match
+  const lower = partType.toLowerCase()
+  for (const key of Object.keys(PART_GROUP_MAP)) {
+    if (lower.includes(key)) return PART_GROUP_MAP[key]
+  }
+  return 'Other'
 }
 
 export function normalizeLayers(task: TaskInfo): LayerInfo[] {
-  if (task.result?.preview_images?.length) {
-    const excludeNames = new Set(['src_img', 'src_head', 'reconstruction'])
-    return task.result.preview_images
-      .filter(img => {
-        if (img.name.endsWith('_depth')) return false
-        if (excludeNames.has(img.name)) return false
-        return true
-      })
-      .map((img, idx) => ({
-        id: img.name,
-        name: img.name,
-        part_type: img.name,
-        group: LAYER_GROUPS[img.name] || 'Other',
-        z_index: idx,
-        bbox: null,
-        file_name: img.path.split('/').pop() || `${img.name}.png`,
-        file_size: 0,
-        source: 'seethrough',
-        _path: img.path,
-      }))
+  const raw = task.layers || []
+  return raw
+    .map((l) => ({
+      ...l,
+      group: l.group || partToGroup(l.part_type || l.name || ''),
+    }))
+    .sort((a, b) => (b.z_index || 0) - (a.z_index || 0))
+}
+
+export function groupLayers(
+  layers: LayerInfo[]
+): Record<string, LayerInfo[]> {
+  const groups: Record<string, LayerInfo[]> = {}
+  for (const l of layers) {
+    const g = l.group || 'Other'
+    if (!groups[g]) groups[g] = []
+    groups[g].push(l)
   }
-  return task.layers || []
+  // sort group keys
+  const sorted: Record<string, LayerInfo[]> = {}
+  for (const name of GROUP_ORDER) {
+    if (groups[name]) sorted[name] = groups[name]
+  }
+  for (const name of Object.keys(groups)) {
+    if (!sorted[name]) sorted[name] = groups[name]
+  }
+  return sorted
 }
 
 export function isTaskDone(task: TaskInfo): boolean {
-  return task.status === 'succeeded' || task.status === 'completed'
+  return task.status === 'done'
 }
 
-export function getLayerImageUrl(taskId: string, layer: LayerInfo): string {
-  const customPath = (layer as any)._path
-  if (customPath) {
-    const encoded = customPath.split('/').map(encodeURIComponent).join('/')
-    return `${API_BASE}/static/tasks/${taskId}/output/${encoded}`
+// ============== API ==============
+
+/** 健康检查（失败时返回默认值，不抛错） */
+export async function healthCheck(): Promise<HealthInfo> {
+  try {
+    const data = await http.get<any>('/api/health', { timeout: 5000 })
+    const d = data && typeof data === 'object' ? data : {}
+    return {
+      status: d.status || (d.gpu_ok ? 'online' : 'offline'),
+      gpu_ok: !!d.gpu_ok,
+      model_loaded: !!d.model_loaded,
+      nsfw_check_available: !!d.nsfw_check_available,
+      queue_size: Number(d.queue_size) || 0,
+      queue_limit: Number(d.queue_limit) || 1,
+      avg_split_seconds: Number(d.avg_split_seconds) || 40,
+      version: String(d.version || 'unknown'),
+      uptime_seconds: Number(d.uptime_seconds) || 0,
+      gpu_memory_gb: Number(d.gpu_memory_gb) || 0,
+      gpu_memory_used_gb: Number(d.gpu_memory_used_gb) || 0,
+    }
+  } catch {
+    return { ...DEFAULT_HEALTH }
   }
-  return `${API_BASE}/api/task/${taskId}/layers/${layer.id}/download`
 }
 
-// ========================
-// API 方法（fetch 替代 wx.request）
-// ========================
+/** NSFW 预检（POST /api/check_nsfw） */
+export async function checkNsfw(file: File | Blob): Promise<NsfwResult> {
+  const fd = new FormData()
+  fd.append('file', file)
+  const data = await http.post<any>('/api/check_nsfw', fd, {
+    timeout: 15000,
+  })
+  const d = data && typeof data === 'object' ? data : {}
+  return {
+    status: (d.nsfw_status || d.status || 'PASS') as NsfwResult['status'],
+    score: Number(d.score) || 0,
+    labels: Array.isArray(d.labels) ? d.labels : [],
+    message: d.message,
+  }
+}
 
-const api = {
-  /**
-   * NSFW 内容检测（上传前预检）
-   *
-   * 调用后端 /api/check_nsfw，返回 AWS Rekognition 检测结果。
-   * 前端根据 action 决定后续动作：
-   *   - "pass" / "skipped" → 直接上传分割
-   *   - "review" → 显示警告，用户可选择「取消」或「坚持上传」（后者用 skipNSFWCheck=true）
-   *   - "reject" → 拒绝上传，不可覆盖
-   */
-  async checkNSFW(file: File): Promise<NSFWCheckResult> {
-    const formData = new FormData()
-    formData.append('file', file)
+/** 上传图片并启动拆分（POST /api/split） */
+export async function uploadImage(
+  file: File | Blob,
+  opts: UploadOptions = {}
+): Promise<SplitInitiateResult> {
+  const fd = new FormData()
+  fd.append('file', file)
+  const params: Record<string, string> = {}
+  if (opts.resolution) params.resolution = String(opts.resolution)
+  if (opts.inference_steps)
+    params.inference_steps = String(opts.inference_steps)
+  if (opts.tblr_split !== undefined)
+    params.tblr_split = String(opts.tblr_split)
+  if (opts.group_offload !== undefined)
+    params.group_offload = String(opts.group_offload)
+  const qs = Object.keys(params).length
+    ? '?' +
+      Object.keys(params)
+        .map((k) => `${k}=${encodeURIComponent(params[k])}`)
+        .join('&')
+    : ''
 
-    const res = await fetch(`${API_BASE}/api/check_nsfw`, {
-      method: 'POST',
-      body: formData,
-      signal: AbortSignal.timeout(30000),
+  try {
+    const data = await http.post<any>(`/api/split${qs}`, fd, {
+      timeout: UPLOAD_TIMEOUT,
     })
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new Error(`NSFW check failed (HTTP ${res.status}): ${text}`)
-    }
-
-    return await res.json() as NSFWCheckResult
-  },
-
-  /**
-   * 上传图片并启动分割
-   *
-   * NSFW 预检流程：
-   *   - skipNSFWCheck=false（默认）：后端执行 NSFW 检测
-   *     - 返回 200 → 正常拿到 task_id
-   *     - 返回 202 → 需要人工复审（抛出 NSFWReviewError，含检测结果）
-   *     - 返回 400 → NSFW 被拒（抛出 NSFWRejectedError，不可覆盖）
-   *   - skipNSFWCheck=true：跳过检测（仅用于人工复审后的覆盖提交）
-   */
-  async uploadImage(file: File, options: UploadOptions): Promise<{ task_id: string; status: string }> {
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('resolution', String(options.resolution))
-    formData.append('inference_steps', String(options.inferenceSteps))
-    formData.append('tblr_split', options.tblrSplit ? 'true' : 'false')
-    if (options.skipNSFWCheck) {
-      formData.append('skip_nsfw_check', 'true')
-    }
-
-    const res = await fetch(`${API_BASE}/api/split`, {
-      method: 'POST',
-      body: formData,
-    })
-
-    // 200 → 正常成功
-    if (res.ok) {
-      const data = await res.json()
-      if (!data.task_id) {
-        throw new Error(`Response missing task_id: ${JSON.stringify(data)}`)
-      }
-      return data
-    }
-
-    // 202 → NSFW 需要人工复审
-    if (res.status === 202) {
-      const data = await res.json() as NSFWReviewRequired
-      throw new NSFWReviewError(data)
-    }
-
-    // 400 → 可能是 NSFW 被拒，也可能是其他参数错误
-    if (res.status === 400) {
-      // 先读 body 文本（避免 res.json() 和 res.text() 重复消费）
-      const text = await res.text().catch(() => '')
-      let data: any
-      try {
-        data = text ? JSON.parse(text) : {}
-      } catch {
-        data = {}
-      }
-      // 检查是否是 NSFW 拒绝错误（FastAPI HTTPException 包成 {detail: {...}}）
-      const detail = data.detail || data
-      if (detail && detail.code === 'NSFW_REJECTED') {
-        throw new NSFWRejectedErrorErr(detail as NSFWRejectedError)
-      }
-      throw new Error(`Upload failed (HTTP 400): ${text || JSON.stringify(detail)}`)
-    }
-
-    // 其他错误
-    const text = await res.text().catch(() => '')
-    throw new Error(`Upload failed (HTTP ${res.status}): ${text}`)
-  },
-
-  /**
-   * 查询任务状态（带重试）
-   * wx.request → fetch
-   */
-  async getTask(taskId: string, maxRetry = 3): Promise<TaskInfo> {
-    let lastError: Error | null = null
-
-    for (let i = 0; i < maxRetry; i++) {
-      try {
-        const res = await fetch(`${API_BASE}/api/task/${taskId}`, {
-          method: 'GET',
-          signal: AbortSignal.timeout(10000),
-        })
-        if (res.ok) {
-          return await res.json() as TaskInfo
+    const d = data && typeof data === 'object' ? data : {}
+    const nsfw: NsfwResult | undefined = d.nsfw
+      ? {
+          status: d.nsfw.nsfw_status || d.nsfw.status || 'PASS',
+          score: Number(d.nsfw.score) || 0,
+          labels: Array.isArray(d.nsfw.labels) ? d.nsfw.labels : [],
+          message: d.nsfw.message,
         }
-        console.warn(`[getTask] HTTP ${res.status}, retry ${i + 1}/${maxRetry}`)
-      } catch (err) {
-        console.warn(`[getTask] Error, retry ${i + 1}/${maxRetry}:`, err)
-        lastError = err as Error
-      }
-      if (i < maxRetry - 1) {
-        await new Promise(r => setTimeout(r, 1500))
-      }
-    }
-    throw lastError || new Error('Failed after retries')
-  },
+      : undefined
 
-  /**
-   * 获取图层图片 URL
-   */
-  getLayerUrl(taskId: string, layer: LayerInfo | string): string {
-    if (typeof layer === 'string') {
-      return `${API_BASE}/api/task/${taskId}/layers/${layer}/download`
-    }
-    return getLayerImageUrl(taskId, layer)
-  },
-
-  /**
-   * 下载图层（浏览器直接触发下载）
-   * wx.downloadFile → <a download>
-   */
-  async downloadLayer(taskId: string, layer: LayerInfo): Promise<void> {
-    const url = this.getLayerUrl(taskId, layer)
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`Download failed (HTTP ${res.status})`)
-    const blob = await res.blob()
-    const blobUrl = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = blobUrl
-    a.download = layer.file_name || `${layer.name}.png`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(blobUrl)
-  },
-
-  /**
-   * 下载 PSD 文件
-   */
-  async downloadPSD(taskId: string): Promise<void> {
-    const url = `${API_BASE}/api/result/${taskId}/psd`
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`PSD download failed (HTTP ${res.status})`)
-    const blob = await res.blob()
-    const blobUrl = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = blobUrl
-    a.download = `live2d_layers_${taskId}.psd`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(blobUrl)
-  },
-
-  /**
-   * 健康检查
-   * wx.request → fetch，保留完整的错误诊断逻辑
-   */
-  async healthCheck(): Promise<HealthInfo> {
-    const t0 = Date.now()
-    try {
-      const res = await fetch(`${API_BASE}/api/health`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(25000),
+    // NSFW 需要用户确认（review）时的交互式处理
+    if (nsfw?.status === 'NSFW_REVIEW' && opts.onNsfwReview) {
+      const confirmed = await opts.onNsfwReview({
+        score: nsfw.score,
+        labels: nsfw.labels,
       })
-      const elapsed = Date.now() - t0
-
-      if (res.ok) {
-        const d = await res.json()
+      if (confirmed) {
+        // 用户确认后，带上 override 参数重新发起
+        const overrideQs =
+          (qs ? qs + '&' : '?') + 'nsfw_override=REVIEW_CONFIRMED'
+        const data2 = await http.post<any>(`/api/split${overrideQs}`, fd, {
+          timeout: UPLOAD_TIMEOUT,
+        })
         return {
-          online: true,
-          status: String(d.status || d.state || 'ok'),
-          seethrough_available: !!(d.seethrough_available || d.seethrough_ok || d.seethrough),
-          gpu_available: !!(d.gpu_available || d.gpu_ok || d.gpu),
-          nsfw_check_enabled: !!d.nsfw_check_enabled,
-          nsfw_check_available: !!d.nsfw_check_available,
-          elapsed,
-          error: '',
-          error_tip: '',
+          task_id: String(data2?.task_id || d.task_id),
+          status: String(data2?.status || d.status || 'pending'),
+          message: data2?.message || d.message,
         }
       }
+    }
 
-      return {
-        ...DEFAULT_HEALTH,
-        elapsed,
-        error: `HTTP ${res.status}`,
-        error_tip: 'Backend responded abnormally, it may be starting up. Try again in 30 seconds.',
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      let tip = 'Troubleshooting steps:'
-
-      if (msg.includes('timeout') || msg.includes('abort')) {
-        tip = 'Connection timeout. The backend may be starting up. Wait 30s and retry.'
-      } else if (msg.includes('fetch') || msg.includes('network')) {
-        tip = 'Network error. Check if the backend URL is correct and the service is running.'
-      }
-
-      return {
-        ...DEFAULT_HEALTH,
-        elapsed: Date.now() - t0,
-        error: msg,
-        error_tip: tip,
+    return {
+      task_id: String(d.task_id),
+      status: String(d.status || 'pending'),
+      message: d.message,
+      nsfw,
+    }
+  } catch (err) {
+    if (err instanceof AppError && err.code === 'NSFW_REVIEW') {
+      // request.ts 也可能拦截抛出 NSFW_REVIEW，在这里处理
+      if (opts.onNsfwReview) {
+        const confirmed = await opts.onNsfwReview({ score: 0.6, labels: [] })
+        if (confirmed) {
+          return uploadImage(file, { ...opts, onNsfwReview: undefined })
+        }
       }
     }
-  },
+    throw err
+  }
 }
 
+/** 查询任务状态 */
+export async function getTask(taskId: string): Promise<TaskInfo> {
+  const data = await http.get<any>(`/api/task/${taskId}`)
+  const d = data && typeof data === 'object' ? data : {}
+  return {
+    task_id: String(d.task_id || taskId),
+    status: (d.status || 'pending') as TaskInfo['status'],
+    message: d.message,
+    progress: Number(d.progress) || 0,
+    elapsed: Number(d.elapsed) || 0,
+    resolution: Number(d.resolution) || undefined,
+    inference_steps: Number(d.inference_steps) || undefined,
+    nsfw_status: d.nsfw_status,
+    layers: Array.isArray(d.layers) ? (d.layers as LayerInfo[]) : [],
+    psd_url: d.psd_url,
+    original_url: d.original_url,
+  }
+}
+
+/** 单个图层下载地址（未签名时直接返回，签名时由后端返回） */
+export function getLayerUrl(taskId: string, layer: LayerInfo): string {
+  const base = getApiBase()
+  const name = layer.file_name || `${layer.id}.png`
+  return `${base}/api/result/${taskId}/layers/${encodeURIComponent(name)}`
+}
+
+/** 下载单个图层（走浏览器 a.download） */
+export async function downloadLayer(
+  taskId: string,
+  layer: LayerInfo
+): Promise<void> {
+  const url = getLayerUrl(taskId, layer)
+  const resp = await fetch(url)
+  if (!resp.ok) throw new AppError('NETWORK_ERROR', resp.status)
+  const blob = await resp.blob()
+  const blobUrl = URL.createObjectURL(blob)
+  try {
+    const a = document.createElement('a')
+    a.href = blobUrl
+    a.download = layer.file_name || `${layer.name || layer.id}.png`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000)
+  }
+}
+
+/** 下载 PSD */
+export async function downloadPSD(taskId: string): Promise<void> {
+  const base = getApiBase()
+  const url = `${base}/api/result/${taskId}/psd`
+  const resp = await fetch(url)
+  if (!resp.ok) throw new AppError('NETWORK_ERROR', resp.status)
+  const blob = await resp.blob()
+  const blobUrl = URL.createObjectURL(blob)
+  try {
+    const a = document.createElement('a')
+    a.href = blobUrl
+    a.download = `split_${taskId}.psd`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000)
+  }
+}
+
+// 兼容之前的 default 导出
+const api = {
+  healthCheck: () => safeResolve(healthCheck(), { ...DEFAULT_HEALTH }),
+  checkNsfw,
+  uploadImage,
+  getTask,
+  getLayerUrl,
+  downloadLayer,
+  downloadPSD,
+}
 export default api
