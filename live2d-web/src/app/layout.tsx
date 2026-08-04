@@ -45,7 +45,33 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="lang-fixed-top">
             <LanguageSwitcher />
           </div>
-          {children}
+          <div className="page-shell">
+            {children}
+          </div>
+          {/* 全局页脚 — 版权 & 开源协议声明 */}
+          <footer className="app-footer" role="contentinfo">
+            <div className="app-footer__inner">
+              <p className="app-footer__copy">
+                © {new Date().getFullYear()} AI Live2D Studio
+                <span className="app-footer__dot" aria-hidden />
+                Powered by{' '}
+                <a
+                  href="https://github.com/lllyasviel/see-through-main"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="app-footer__link"
+                >
+                  See-Through
+                </a>{' '}
+                (Apache-2.0)
+              </p>
+              <nav aria-label="Legal">
+                <a href="/legal" className="app-footer__link app-footer__legal">
+                  Third-Party Licenses
+                </a>
+              </nav>
+            </div>
+          </footer>
           {/* 全局 Toast 容器 */}
           <ToastContainer />
         </I18nProvider>
