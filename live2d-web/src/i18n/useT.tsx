@@ -73,8 +73,13 @@ export function interpolate(
   params?: Record<string, string | number>
 ): string {
   if (!params) return text
-  return text.replace(/\{(\w+)\}/g, (_, k) => {
-    return params[k] != null ? String(params[k]) : `{${k}}`
+  // 双花括号 {{xxx}} 优先匹配，避免被拆成 { + {xxx} + }；同时兼容单花括号 {xxx}
+  return text.replace(/\{\{(\w+)\}\}|\{(\w+)\}/g, (_, kDouble, kSingle) => {
+    const k = kDouble ?? kSingle
+    const v = params[k]
+    if (v != null) return String(v)
+    // 未匹配时按原格式返回（保留双/单括号样式）
+    return kDouble ? `{{${kDouble}}}` : `{${kSingle}}`
   })
 }
 

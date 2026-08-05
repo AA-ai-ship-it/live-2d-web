@@ -1,1 +1,34 @@
+# 依赖
+node_modules
+.pnp
+.pnp.js
+
+# 构建产物
+.next
+out
+build
+dist
+
+# 部署
 .vercel
+
+# 调试
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 本地环境变量（严禁提交到 git）
+.env
+.env.local
+.env.*.local
+
+# 编辑器 / 系统
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# 类型检查缓存
+*.tsbuildinfo
+next-env.d.ts
