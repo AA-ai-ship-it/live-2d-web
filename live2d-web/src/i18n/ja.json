@@ -124,7 +124,11 @@
       "video": "動画 (MP4)",
       "cancel": "キャンセル",
       "confirm": "書き出し",
-      "processing": "レンダリング中..."
+      "processing": "レンダリング中...",
+      "progress": "進捗 {{percent}}%",
+      "success": "書き出し成功",
+      "failed": "書き出し失敗：{{error}}",
+      "live2dUnsupported": "Live2D形式は未対応です、お楽しみに"
     }
   }
 }

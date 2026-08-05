@@ -124,7 +124,11 @@
       "video": "Video (MP4)",
       "cancel": "Cancel",
       "confirm": "Export",
-      "processing": "Rendering..."
+      "processing": "Rendering...",
+      "progress": "Progress {{percent}}%",
+      "success": "Export succeeded",
+      "failed": "Export failed: {{error}}",
+      "live2dUnsupported": "Live2D format not yet available, stay tuned"
     }
   }
 }

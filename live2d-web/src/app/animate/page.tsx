@@ -1,12 +1,21 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import dynamic from 'next/dynamic'
 import { motion, AnimatePresence } from 'framer-motion'
-import AnimationCanvas, { EffectState } from '@/components/AnimationCanvas'
+import type { EffectState } from '@/lib/rig/types'
+import { exportGif, exportVideo, downloadBlob } from '@/lib/rig/exporter'
+import type { PixiStage } from '@/lib/rig/PixiStage'
+import type { EffectDriver } from '@/lib/rig/effectSystem'
 import { useAppStore } from '@/store/useAppStore'
 import { toast } from '@/store/toastStore'
 import { useT } from '@/i18n/useT'
+
+const PixiAnimateCanvas = dynamic(
+  () => import('@/components/PixiAnimateCanvas'),
+  { ssr: false },
+)
 import {
   MOCK_LAYERS, EFFECT_DEFS, EXPORT_FORMATS,
   EFFECT_GROUPS, DEFAULT_EFFECTS,
@@ -69,6 +78,11 @@ export default function AnimatePage() {
   const [showExport, setShowExport] = useState(false)
   const [exportFormat, setExportFormat] = useState<ExportFormat>('gif')
   const [exporting, setExporting] = useState(false)
+  const [exportProgress, setExportProgress] = useState(0)
+
+  // PixiStage / EffectDriver 引用，供导出函数使用
+  const stageRef = useRef<PixiStage | null>(null)
+  const driverRef = useRef<EffectDriver | null>(null)
 
   useEffect(() => {
     try {
@@ -124,22 +138,60 @@ export default function AnimatePage() {
     }
   }
 
-  const handleExport = () => {
+  const handleExport = async () => {
+    // Live2D 格式暂未开放
+    if (exportFormat === 'live2d') {
+      toast.info(t('animate.export.live2dUnsupported'))
+      return
+    }
+
+    const stage = stageRef.current
+    const driver = driverRef.current
+    if (!stage || !driver) {
+      toast.error(t('animate.export.failed', { error: 'Animation engine not ready' }))
+      return
+    }
+
     try {
       setExporting(true)
-      setTimeout(() => {
-        try {
-          setExporting(false)
-          setShowExport(false)
-          toast.info('Export coming soon')
-        } catch (innerErr) {
-          setExporting(false)
-          toast.error(t('animate.errors.exportFailed'))
-        }
-      }, 1500)
+      setExportProgress(0)
+
+      const canvas = stage.getCanvas()
+      const exportWidth = canvas.width / window.devicePixelRatio
+      const exportHeight = canvas.height / window.devicePixelRatio
+      const duration = 3000 // 3 秒
+      const fps = 30
+
+      let blob: Blob
+      let filename: string
+
+      if (exportFormat === 'gif') {
+        blob = await exportGif(stage, driver, {
+          width: exportWidth,
+          height: exportHeight,
+          duration,
+          fps,
+          onProgress: (p) => setExportProgress(p),
+        })
+        filename = `live2d-${taskId || 'mock'}.gif`
+      } else {
+        const res = await exportVideo(stage, driver, {
+          duration,
+          fps,
+          onProgress: (p) => setExportProgress(p),
+        })
+        blob = res.blob
+        filename = `live2d-${taskId || 'mock'}.${res.ext}`
+      }
+
+      downloadBlob(blob, filename)
+      toast.success(t('animate.export.success'))
+      setShowExport(false)
     } catch (err) {
+      toast.error(t('animate.export.failed', { error: (err as Error).message }))
+    } finally {
       setExporting(false)
-      toast.error(t('animate.errors.exportFailed'))
+      setExportProgress(0)
     }
   }
 
@@ -189,12 +241,16 @@ export default function AnimatePage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
       >
-        <AnimationCanvas
+        <PixiAnimateCanvas
           layers={canvasLayers}
+          taskId={taskId || 'mock'}
           effects={effectStates}
-          effectDefs={EFFECT_DEFS}
           width={512}
           height={512}
+          onReady={({ stage, driver }) => {
+            stageRef.current = stage
+            driverRef.current = driver
+          }}
         />
         <div className="canvas-hint">{t('animate.previewHint')}</div>
       </motion.div>
@@ -302,12 +358,26 @@ export default function AnimatePage() {
                     key={fmt.id}
                     className={`export-format-btn ${exportFormat === fmt.id ? 'active' : ''}`}
                     onClick={() => setExportFormat(fmt.id)}
+                    disabled={exporting}
                   >
                     <span className="fmt-icon">{fmt.icon}</span>
                     <span className="fmt-label">{t(fmt.nameKey)}</span>
                   </button>
                 ))}
               </div>
+              {exporting && (
+                <div className="export-progress">
+                  <div className="progress-bar">
+                    <div
+                      className="progress-fill"
+                      style={{ width: `${Math.round(exportProgress * 100)}%` }}
+                    />
+                  </div>
+                  <span className="progress-text">
+                    {t('animate.export.progress', { percent: Math.round(exportProgress * 100) })}
+                  </span>
+                </div>
+              )}
               <div className="export-actions">
                 <button
                   className="export-cancel"

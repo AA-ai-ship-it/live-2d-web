@@ -124,7 +124,11 @@
       "video": "视频 (MP4)",
       "cancel": "取消",
       "confirm": "导出",
-      "processing": "渲染中..."
+      "processing": "渲染中...",
+      "progress": "进度 {{percent}}%",
+      "success": "导出成功",
+      "failed": "导出失败：{{error}}",
+      "live2dUnsupported": "Live2D 格式暂未开放，敬请期待"
     }
   }
 }

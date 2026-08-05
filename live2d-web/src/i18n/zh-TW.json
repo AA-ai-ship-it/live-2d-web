@@ -124,7 +124,11 @@
       "video": "影片 (MP4)",
       "cancel": "取消",
       "confirm": "匯出",
-      "processing": "算圖中..."
+      "processing": "算圖中...",
+      "progress": "進度 {{percent}}%",
+      "success": "匯出成功",
+      "failed": "匯出失敗：{{error}}",
+      "live2dUnsupported": "Live2D 格式暫未開放，敬請期待"
     }
   }
 }
